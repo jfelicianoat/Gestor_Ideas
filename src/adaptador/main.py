@@ -65,7 +65,7 @@ def main() -> None:
     logger.info("Tema soft-dark aplicado")
 
     # Crear y mostrar ventana principal
-    window = MainWindow()
+    window = MainWindow(engine=engine)
     window.show()
     logger.info("Ventana principal visible — aplicación lista")
 

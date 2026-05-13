@@ -2,24 +2,34 @@
 Ventana principal del Gestor de Ideas.
 
 Contiene la estructura base de la aplicación: barra de menú,
-área central con mensaje de bienvenida y barra de estado.
-Se expandirá en iteraciones posteriores con el tablero Kanban,
-panel de entrada y sistema de jobs.
+área central con el tablero Kanban y el panel de captura rápida.
 
 Referencia: CONTEXT_PACK.md §12
 """
 
-from PySide6.QtCore import Qt
+from typing import Any
+
 from PySide6.QtWidgets import (
+    QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QMenuBar,
+    QMessageBox,
+    QPushButton,
     QStatusBar,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
+from sqlmodel import Session
 
+from adaptador.db.idea_repository import SQLIdeaRepository
+from adaptador.domain.entities import Idea
+from adaptador.domain.enums import EstadoKanban
+from adaptador.ui.kanban.idea_card import IdeaCard
+from adaptador.ui.kanban.kanban_column import KanbanColumn
 from adaptador.ui.theme import COLORS
 
 
@@ -27,22 +37,31 @@ class MainWindow(QMainWindow):
     """
     Ventana principal de la aplicación.
 
-    Estructura mínima de Iteración 0:
-    - Barra de menú con opciones básicas
-    - Área central con mensaje de bienvenida
-    - Barra de estado con información de conexión
+    Estructura de Iteración 1:
+    - Barra de menú
+    - Panel izquierdo: Formulario de captura rápida
+    - Panel derecho: Tablero Kanban
+    - Barra de estado
     """
 
     # Dimensiones por defecto
     DEFAULT_WIDTH = 1200
     DEFAULT_HEIGHT = 800
 
-    def __init__(self) -> None:
+    def __init__(self, engine: Any = None) -> None:
+        """
+        Inicializa la ventana principal.
+
+        Args:
+            engine: Engine de SQLAlchemy/SQLModel (opcional para tests).
+        """
         super().__init__()
+        self.engine = engine
         self._setup_window()
         self._setup_menu()
         self._setup_central_widget()
         self._setup_status_bar()
+        self._load_ideas()
 
     def _setup_window(self) -> None:
         """Configura propiedades básicas de la ventana."""
@@ -64,62 +83,88 @@ class MainWindow(QMainWindow):
         menu_ayuda.addAction("&Acerca de", self._show_about)
 
     def _setup_central_widget(self) -> None:
-        """Configura el widget central con mensaje de bienvenida."""
+        """Configura el widget central con captura y Kanban."""
         central = QWidget()
         self.setCentralWidget(central)
 
-        layout = QVBoxLayout(central)
-        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.setSpacing(16)
+        main_layout = QHBoxLayout(central)
+        main_layout.setSpacing(16)
+        main_layout.setContentsMargins(16, 16, 16, 16)
 
-        # Título de bienvenida
-        titulo = QLabel("🧠 Gestor de Ideas")
-        titulo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        titulo.setStyleSheet(
-            f"font-size: 32px; "
-            f"font-weight: bold; "
-            f"color: {COLORS['accent']}; "
-            f"background-color: transparent;"
+        # 1. Panel Izquierdo: Captura Rápida
+        panel_captura = QFrame()
+        panel_captura.setObjectName("panelCaptura")
+        panel_captura.setStyleSheet(
+            f"""
+            #panelCaptura {{
+                background-color: {COLORS['bg_secondary']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 8px;
+            }}
+        """
+        )
+        panel_captura.setFixedWidth(300)
+
+        layout_captura = QVBoxLayout(panel_captura)
+        layout_captura.setContentsMargins(16, 16, 16, 16)
+        layout_captura.setSpacing(12)
+
+        lbl_captura = QLabel("📝 Captura Rápida")
+        lbl_captura.setStyleSheet(
+            f"font-size: 16px; font-weight: bold; "
+            f"color: {COLORS['accent']}; background: transparent;"
         )
 
-        # Subtítulo descriptivo
-        subtitulo = QLabel(
-            "Captura, transcribe y enriquece tus ideas con IA local"
-        )
-        subtitulo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        subtitulo.setStyleSheet(
-            f"font-size: 16px; "
-            f"color: {COLORS['text_secondary']}; "
-            f"background-color: transparent;"
+        self.txt_titulo = QLineEdit()
+        self.txt_titulo.setPlaceholderText("Título de la idea (opcional)")
+        self.txt_titulo.setStyleSheet(
+            f"padding: 8px; border: 1px solid {COLORS['border']}; "
+            f"border-radius: 4px; background: {COLORS['bg_primary']};"
         )
 
-        # Indicador de estado del esqueleto
-        estado = QLabel("Iteración 0 — Esqueleto activo ✓")
-        estado.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        estado.setStyleSheet(
-            f"font-size: 13px; "
-            f"color: {COLORS['success']}; "
-            f"background-color: transparent; "
-            f"margin-top: 24px;"
+        self.txt_contenido = QTextEdit()
+        self.txt_contenido.setPlaceholderText("Escribe tu idea aquí...")
+        self.txt_contenido.setStyleSheet(
+            f"padding: 8px; border: 1px solid {COLORS['border']}; "
+            f"border-radius: 4px; background: {COLORS['bg_primary']};"
         )
 
-        # Atajos de teclado (info)
-        atajos_layout = QHBoxLayout()
-        atajos_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        atajos = QLabel("Alt+A → Archivo  |  Alt+Y → Ayuda")
-        atajos.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        atajos.setStyleSheet(
-            f"font-size: 11px; "
-            f"color: {COLORS['text_muted']}; "
-            f"background-color: transparent; "
-            f"margin-top: 40px;"
+        self.btn_guardar = QPushButton("Guardar Idea")
+        self.btn_guardar.setStyleSheet(
+            f"""
+            QPushButton {{
+                background-color: {COLORS['accent']};
+                color: {COLORS['bg_primary']};
+                font-weight: bold;
+                padding: 10px;
+                border-radius: 4px;
+            }}
+            QPushButton:hover {{ background-color: #55aaff; }}
+        """
         )
-        atajos_layout.addWidget(atajos)
+        self.btn_guardar.clicked.connect(self._on_guardar_click)
 
-        layout.addWidget(titulo)
-        layout.addWidget(subtitulo)
-        layout.addWidget(estado)
-        layout.addLayout(atajos_layout)
+        layout_captura.addWidget(lbl_captura)
+        layout_captura.addWidget(self.txt_titulo)
+        layout_captura.addWidget(self.txt_contenido)
+        layout_captura.addWidget(self.btn_guardar)
+
+        # 2. Panel Derecho: Tablero Kanban
+        panel_kanban = QWidget()
+        layout_kanban = QHBoxLayout(panel_kanban)
+        layout_kanban.setContentsMargins(0, 0, 0, 0)
+        layout_kanban.setSpacing(12)
+
+        # Inicializar y guardar las 4 columnas
+        self.columnas: dict[EstadoKanban, KanbanColumn] = {}
+        for estado in EstadoKanban:
+            col = KanbanColumn(estado)
+            self.columnas[estado] = col
+            layout_kanban.addWidget(col)
+
+        # Agregar paneles al layout principal
+        main_layout.addWidget(panel_captura)
+        main_layout.addWidget(panel_kanban, stretch=1)
 
     def _setup_status_bar(self) -> None:
         """Configura la barra de estado."""
@@ -127,10 +172,59 @@ class MainWindow(QMainWindow):
         self.setStatusBar(status)
         status.showMessage("Listo — Base de datos conectada")
 
+    def _on_guardar_click(self) -> None:
+        """Crea una idea desde el panel y refresca."""
+        if not self.engine:
+            QMessageBox.warning(self, "Error", "No hay conexión a la base de datos.")
+            return
+
+        contenido = self.txt_contenido.toPlainText().strip()
+        if not contenido:
+            return  # No hacer nada si está vacío
+
+        idea = Idea(
+            titulo=self.txt_titulo.text().strip(),
+            contenido_raw=contenido,
+        )
+
+        try:
+            with Session(self.engine) as session:
+                repo = SQLIdeaRepository(session)
+                repo.create(idea)
+
+            # Limpiar el formulario si fue exitoso
+            self.txt_titulo.clear()
+            self.txt_contenido.clear()
+            self._load_ideas()
+            self.statusBar().showMessage(f"Idea guardada: {idea.id}", 3000)
+
+        except Exception as e:
+            QMessageBox.critical(
+                self, "Error", f"No se pudo guardar la idea:\n{str(e)}"
+            )
+
+    def _load_ideas(self) -> None:
+        """Carga las ideas de la BD y refresca el tablero Kanban."""
+        if not self.engine:
+            return
+
+        # Limpiar columnas
+        for col in self.columnas.values():
+            col.clear_cards()
+
+        try:
+            with Session(self.engine) as session:
+                repo = SQLIdeaRepository(session)
+                for estado in EstadoKanban:
+                    ideas = repo.list_by_estado(estado)
+                    for idea in ideas:
+                        card = IdeaCard(idea)
+                        self.columnas[estado].add_card(card)
+        except Exception as e:
+            self.statusBar().showMessage(f"Error al cargar ideas: {str(e)}", 5000)
+
     def _show_about(self) -> None:
         """Muestra información básica de la aplicación."""
-        from PySide6.QtWidgets import QMessageBox
-
         QMessageBox.about(
             self,
             "Acerca de Gestor de Ideas",
