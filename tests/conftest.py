@@ -42,3 +42,19 @@ def db_session(sqlite_engine):
     with Session(sqlite_engine) as session:
         yield session
         session.rollback()
+
+
+@pytest.fixture(scope="session")
+def qapp():
+    """
+    QApplication compartida para todos los tests de UI.
+
+    PySide6 solo permite una instancia de QApplication por proceso.
+    Se reutiliza la existente si ya fue creada.
+    """
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication([])
+    yield app

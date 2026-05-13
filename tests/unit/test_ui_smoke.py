@@ -6,25 +6,9 @@ Usan QApplication headless (sin ventana visible) para
 funcionar en entornos CI sin display.
 """
 
-import pytest
-from PySide6.QtWidgets import QApplication
 
 from adaptador.ui.main_window import MainWindow
 from adaptador.ui.theme import COLORS, build_stylesheet
-
-
-@pytest.fixture(scope="module")
-def qapp():
-    """
-    QApplication compartida para todos los tests del módulo.
-
-    PySide6 solo permite una instancia de QApplication por proceso.
-    Se reutiliza la existente si ya fue creada.
-    """
-    app = QApplication.instance()
-    if app is None:
-        app = QApplication([])
-    yield app
 
 
 class TestTheme:
