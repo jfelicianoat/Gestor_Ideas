@@ -6,9 +6,6 @@ persistencia sin tocar disco.
 """
 
 import pytest
-from sqlmodel import Session, SQLModel
-
-from adaptador.db.engine import create_engine
 
 
 @pytest.fixture
@@ -20,6 +17,10 @@ def sqlite_engine(tmp_path):
     Se usa archivo temporal en vez de :memory: para validar
     que los pragmas WAL funcionan correctamente.
     """
+    from sqlmodel import SQLModel
+
+    from adaptador.db.engine import create_engine
+
     db_path = tmp_path / "test.db"
     engine = create_engine(db_path)
 
@@ -39,6 +40,8 @@ def db_session(sqlite_engine):
     Cada test recibe una sesión limpia con rollback al finalizar
     para evitar contaminación entre tests.
     """
+    from sqlmodel import Session
+
     with Session(sqlite_engine) as session:
         yield session
         session.rollback()
