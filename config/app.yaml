@@ -1,0 +1,43 @@
+# ============================================================
+# Configuración del Gestor de Ideas
+# ============================================================
+# Este archivo contiene todos los parámetros configurables
+# de la aplicación. Modifique los valores según su entorno.
+# ============================================================
+
+# --- Conexión con Ollama (LLM en LAN) ---
+ollama:
+  # URL base del servidor Ollama en la red local
+  url: "http://192.168.1.100:11434"
+  # Modelo por defecto para enriquecimiento de ideas
+  default_model: "llama3.2"
+  # Tiempo máximo de espera por respuesta (en segundos)
+  timeout_seconds: 120
+
+# --- Transcripción de audio con faster-whisper ---
+whisper:
+  # Tamaño del modelo Whisper: tiny, base, small, medium, large-v3
+  # Modelos más pequeños = más rápidos, menos precisos
+  model_size: "base"
+
+# --- Sistema de jobs IA ---
+jobs:
+  # Número máximo de reintentos ante fallo de un job
+  max_retries: 3
+  # Base del backoff exponencial entre reintentos (en segundos)
+  # Reintento N espera: backoff_base_seconds * 2^N
+  backoff_base_seconds: 5
+  # Intervalo de polling del worker para drenar la cola (en segundos)
+  poll_interval_seconds: 10
+
+# --- Base de datos SQLite ---
+database:
+  # Ruta al archivo de base de datos (relativa al directorio de la app)
+  path: "data/gestor_ideas.db"
+
+# --- Backups automáticos ---
+backup:
+  # Directorio donde se almacenan los backups versionados
+  directory: "backups"
+  # Número máximo de backups a conservar (política de retención)
+  max_versions: 10
