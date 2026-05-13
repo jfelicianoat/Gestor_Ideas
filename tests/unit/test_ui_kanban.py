@@ -41,3 +41,37 @@ class TestIdeaCard:
         card = IdeaCard(idea)
 
         assert card.lbl_titulo.text() == "Sin título"
+
+
+class TestKanbanColumn:
+    """Tests del widget KanbanColumn."""
+
+    def test_instanciacion_columna(self, qapp) -> None:
+        """KanbanColumn se inicializa con su estado y contador en 0."""
+        from adaptador.domain.enums import EstadoKanban
+        from adaptador.ui.kanban.kanban_column import KanbanColumn
+
+        col = KanbanColumn(EstadoKanban.NUEVA)
+        assert col.lbl_titulo.text() == "NUEVA"
+        assert col.lbl_contador.text() == "0 tarjetas"
+
+    def test_add_y_clear_cards(self, qapp) -> None:
+        """add_card añade widgets al layout y clear_cards los elimina."""
+        from adaptador.domain.enums import EstadoKanban
+        from adaptador.ui.kanban.kanban_column import KanbanColumn
+
+        col = KanbanColumn(EstadoKanban.EN_PROCESO)
+
+        idea1 = Idea(titulo="Idea 1")
+        idea2 = Idea(titulo="Idea 2")
+
+        col.add_card(IdeaCard(idea1))
+        col.add_card(IdeaCard(idea2))
+
+        assert col.cards_layout.count() == 2
+        assert col.lbl_contador.text() == "2 tarjetas"
+
+        col.clear_cards()
+
+        assert col.cards_layout.count() == 0
+        assert col.lbl_contador.text() == "0 tarjetas"
