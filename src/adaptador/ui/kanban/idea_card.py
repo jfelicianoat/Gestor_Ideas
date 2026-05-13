@@ -6,7 +6,7 @@ Muestra información clave (título, extracto, fecha, tipo) y permite
 interacciones básicas (como avanzar a la siguiente columna).
 """
 
-from PySide6.QtWidgets import QFrame, QLabel, QVBoxLayout
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
 
 from adaptador.domain.entities import Idea
 from adaptador.ui.theme import COLORS
@@ -19,16 +19,23 @@ class IdeaCard(QFrame):
 
     MAX_TEXT_LEN = 100  # Caracteres máximos para el extracto de contenido
 
-    def __init__(self, idea: Idea) -> None:
+    def __init__(self, idea: Idea, on_avanzar: callable | None = None) -> None:
         """
         Inicializa la tarjeta con los datos de una Idea.
 
         Args:
             idea: Entidad de dominio Idea a mostrar.
+            on_avanzar: Callback llamado cuando se presiona el botón avanzar.
         """
         super().__init__()
         self.idea = idea
+        self.on_avanzar = on_avanzar
         self._setup_ui()
+
+    def _on_avanzar_clicked(self) -> None:
+        """Manejador del clic en el botón de avanzar."""
+        if self.on_avanzar:
+            self.on_avanzar(self.idea)
 
     def _setup_ui(self) -> None:
         """Configura el layout y estilos de la tarjeta."""
@@ -63,7 +70,10 @@ class IdeaCard(QFrame):
         )
         self.lbl_contenido.setWordWrap(True)
 
-        # 3. Metadatos (Fecha y Tipo)
+        # 3. Metadatos (Fecha y Tipo) y botón avanzar
+        layout_meta = QHBoxLayout()
+        layout_meta.setContentsMargins(0, 0, 0, 0)
+
         fecha_str = self.idea.fecha_creacion.strftime("%Y-%m-%d %H:%M")
         tipo_str = self.idea.tipo_entrada.value.capitalize()
         self.lbl_meta = QLabel(f"📅 {fecha_str} • 🏷️ {tipo_str}")
@@ -72,12 +82,32 @@ class IdeaCard(QFrame):
             f"font-size: 11px; "
             f"background-color: transparent;"
         )
+        layout_meta.addWidget(self.lbl_meta)
+        layout_meta.addStretch()
+
+        self.btn_avanzar = QPushButton("▶")
+        self.btn_avanzar.setToolTip("Avanzar estado")
+        self.btn_avanzar.setFixedSize(24, 24)
+        self.btn_avanzar.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {COLORS['bg_primary']};
+                color: {COLORS['text_primary']};
+                border: 1px solid {COLORS['border']};
+                border-radius: 4px;
+            }}
+            QPushButton:hover {{
+                background-color: {COLORS['accent']};
+                color: {COLORS['bg_primary']};
+            }}
+        """)
+        self.btn_avanzar.clicked.connect(self._on_avanzar_clicked)
+        layout_meta.addWidget(self.btn_avanzar)
 
         # Agregar widgets al layout
         layout.addWidget(self.lbl_titulo)
         layout.addWidget(self.lbl_contenido)
         layout.addStretch()  # Empujar meta abajo si la tarjeta es alta
-        layout.addWidget(self.lbl_meta)
+        layout.addLayout(layout_meta)
 
         # Estilo general del frame (tarjeta)
         self.setStyleSheet(f"""

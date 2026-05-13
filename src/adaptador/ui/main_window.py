@@ -218,10 +218,36 @@ class MainWindow(QMainWindow):
                 for estado in EstadoKanban:
                     ideas = repo.list_by_estado(estado)
                     for idea in ideas:
-                        card = IdeaCard(idea)
+                        card = IdeaCard(idea, on_avanzar=self._on_avanzar_idea)
                         self.columnas[estado].add_card(card)
         except Exception as e:
             self.statusBar().showMessage(f"Error al cargar ideas: {str(e)}", 5000)
+
+    def _on_avanzar_idea(self, idea: Idea) -> None:
+        """Avanza la idea al siguiente estado y actualiza."""
+        if not self.engine:
+            return
+
+        # Calcular siguiente estado
+        estados = list(EstadoKanban)
+        idx_actual = estados.index(idea.estado_kanban)
+        if idx_actual >= len(estados) - 1:
+            return  # Ya está en el último estado
+
+        siguiente_estado = estados[idx_actual + 1]
+
+        try:
+            idea.cambiar_estado(siguiente_estado)
+            with Session(self.engine) as session:
+                repo = SQLIdeaRepository(session)
+                repo.update(idea)
+
+            self._load_ideas()
+            self.statusBar().showMessage(
+                f"Idea movida a {siguiente_estado.value}", 3000
+            )
+        except Exception as e:
+            QMessageBox.warning(self, "Error al mover idea", str(e))
 
     def _show_about(self) -> None:
         """Muestra información básica de la aplicación."""
