@@ -62,7 +62,7 @@ class TestLoadConfigExitosa:
 
         config = load_config(config_file)
 
-        assert config.ollama.url == "http://192.168.1.100:11434"
+        assert config.ollama.url == "http://localhost:11434"
         assert config.ollama.default_model == "llama3.2"
         assert config.ollama.timeout_seconds == 120
         assert config.whisper.model_size == "base"
@@ -149,7 +149,7 @@ class TestAppConfigModelo:
         """AppConfig() sin argumentos produce configuración válida."""
         config = AppConfig()
 
-        assert config.ollama.url == "http://192.168.1.100:11434"
+        assert config.ollama.url == "http://localhost:11434"
         assert config.jobs.poll_interval_seconds == 10
         assert config.backup.max_versions == 10
 

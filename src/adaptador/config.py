@@ -24,8 +24,8 @@ class ConfigError(Exception):
 class OllamaConfig(BaseModel):
     """Parámetros de conexión con el servidor Ollama en LAN."""
 
-    # URL base del servidor Ollama
-    url: str = Field(default="http://192.168.1.100:11434")
+    # URL base del servidor Ollama (se recomienda configurar en app.yaml)
+    url: str = Field(default="http://localhost:11434")
     # Modelo LLM por defecto
     default_model: str = Field(default="llama3.2")
     # Timeout máximo por request en segundos
