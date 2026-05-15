@@ -49,12 +49,13 @@ class IdeaModel(SQLModel, table=True):
     archivo_adjunto: str | None = Field(default=None, max_length=1000)
     # Timestamps
     fecha_creacion: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    fecha_modificacion: datetime = Field(
-        default_factory=lambda: datetime.now(UTC)
-    )
+    fecha_modificacion: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     # Relación 1-a-muchos con JobModel
-    jobs: list["JobModel"] = Relationship(back_populates="idea")
+    jobs: list["JobModel"] = Relationship(
+        back_populates="idea",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"},
+    )
 
 
 class JobModel(SQLModel, table=True):
@@ -87,14 +88,10 @@ class JobModel(SQLModel, table=True):
     # Parámetros del job serializado como JSON string
     payload: str = Field(default="{}")
     # Resultado del LLM o descripción del error
-    resultado: str | None = Field(
-        default=None, sa_column=Column(Text, nullable=True)
-    )
+    resultado: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     # Timestamps
     fecha_creado: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    fecha_actualizado: datetime = Field(
-        default_factory=lambda: datetime.now(UTC)
-    )
+    fecha_actualizado: datetime = Field(default_factory=lambda: datetime.now(UTC))
     # Timeout máximo por intento en segundos
     timeout_segundos: int = Field(default=120)
 

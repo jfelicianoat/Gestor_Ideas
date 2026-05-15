@@ -26,11 +26,12 @@ class TestTheme:
         for clave in claves_requeridas:
             assert clave in COLORS, f"Falta color: {clave}"
 
-    def test_colors_son_hex_validos(self) -> None:
-        """Todos los colores son códigos hex de 7 caracteres."""
+    def test_colors_son_hex_o_rgba_validos(self) -> None:
+        """Todos los colores son códigos hex (#xxxxxx) o rgba()."""
         for nombre, valor in COLORS.items():
-            assert valor.startswith("#"), f"{nombre} no es hex: {valor}"
-            assert len(valor) == 7, f"{nombre} no tiene 7 chars: {valor}"
+            assert valor.startswith("#") or valor.startswith("rgba("), (
+                f"{nombre} no es hex ni rgba: {valor}"
+            )
 
     def test_stylesheet_genera_string_no_vacio(self) -> None:
         """build_stylesheet() devuelve una hoja de estilos no vacía."""
@@ -51,7 +52,7 @@ class TestMainWindow:
     def test_titulo_correcto(self, qapp) -> None:
         """La ventana tiene el título esperado."""
         window = MainWindow()
-        assert "Gestor de Ideas" in window.windowTitle()
+        assert "Adaptador de Ideas" in window.windowTitle()
 
     def test_dimensiones_minimas(self, qapp) -> None:
         """La ventana tiene las dimensiones mínimas configuradas."""

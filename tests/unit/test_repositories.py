@@ -115,6 +115,18 @@ class TestSQLIdeaRepository:
             assert found is not None
             assert found.tipo_entrada == tipo
 
+    def test_delete_idea_elimina_jobs_asociados(self, db_session) -> None:
+        """delete elimina primero los jobs asociados para respetar la FK."""
+        idea_repo = SQLIdeaRepository(db_session)
+        job_repo = SQLJobRepository(db_session)
+        idea = idea_repo.create(Idea(titulo="Con jobs", contenido_raw="Texto"))
+        job = job_repo.create(Job(idea_id=idea.id))
+
+        idea_repo.delete(idea.id)
+
+        assert idea_repo.get_by_id(idea.id) is None
+        assert job_repo.get_by_id(job.id) is None
+
 
 # ============================================================
 # Tests del repositorio de Jobs
@@ -175,6 +187,17 @@ class TestSQLJobRepository:
         pending = repo.list_pending()
         assert len(pending) == 2
         assert all(j.estado == EstadoJob.PENDIENTE for j in pending)
+
+    def test_list_by_estado(self, db_session) -> None:
+        """list_by_estado filtra por cualquier EstadoJob."""
+        idea = self._crear_idea(db_session)
+        repo = SQLJobRepository(db_session)
+        repo.create(Job(idea_id=idea.id, estado=EstadoJob.PENDIENTE))
+        running = repo.create(Job(idea_id=idea.id, estado=EstadoJob.EN_CURSO))
+
+        en_curso = repo.list_by_estado(EstadoJob.EN_CURSO)
+
+        assert [job.id for job in en_curso] == [running.id]
 
     def test_update_job(self, db_session) -> None:
         """update modifica los datos y devuelve la entidad actualizada."""

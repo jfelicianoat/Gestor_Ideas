@@ -10,6 +10,8 @@ Cubre:
 - Contexto del error InvalidStateTransitionError
 """
 
+from uuid import UUID
+
 import pytest
 
 from adaptador.domain.entities import BackupRegistro, Idea, Job
@@ -186,15 +188,17 @@ class TestIdea:
 class TestJob:
     """Tests de la entidad Job."""
 
+    _DUMMY_IDEA = UUID(int=12345678901234567890)
+
     def test_job_default_es_pendiente(self) -> None:
         """Un job recién creado tiene estado PENDIENTE."""
-        job = Job()
+        job = Job(idea_id=self._DUMMY_IDEA)
         assert job.estado == EstadoJob.PENDIENTE
         assert job.intentos == 0
 
     def test_job_cambiar_estado_valido(self) -> None:
         """cambiar_estado() actualiza estado y timestamp."""
-        job = Job()
+        job = Job(idea_id=self._DUMMY_IDEA)
         fecha_original = job.fecha_actualizado
 
         job.cambiar_estado(EstadoJob.EN_CURSO)
@@ -204,7 +208,7 @@ class TestJob:
 
     def test_job_cambiar_estado_invalido(self) -> None:
         """cambiar_estado() inválido lanza error sin mutar estado."""
-        job = Job()
+        job = Job(idea_id=self._DUMMY_IDEA)
 
         with pytest.raises(InvalidStateTransitionError):
             job.cambiar_estado(EstadoJob.COMPLETADO)
@@ -213,7 +217,7 @@ class TestJob:
 
     def test_job_registrar_intento(self) -> None:
         """registrar_intento() incrementa el contador."""
-        job = Job(max_intentos=3)
+        job = Job(idea_id=self._DUMMY_IDEA, max_intentos=3)
         assert job.intentos == 0
 
         job.registrar_intento()
@@ -224,7 +228,7 @@ class TestJob:
 
     def test_job_puede_reintentar(self) -> None:
         """puede_reintentar() devuelve False al agotar intentos."""
-        job = Job(max_intentos=2)
+        job = Job(idea_id=self._DUMMY_IDEA, max_intentos=2)
 
         assert job.puede_reintentar() is True
         job.registrar_intento()
@@ -234,7 +238,7 @@ class TestJob:
 
     def test_job_flujo_reintento(self) -> None:
         """Un job fallido puede volver a pendiente para reintento."""
-        job = Job()
+        job = Job(idea_id=self._DUMMY_IDEA)
         job.cambiar_estado(EstadoJob.EN_CURSO)
         job.cambiar_estado(EstadoJob.FALLIDO)
         job.cambiar_estado(EstadoJob.PENDIENTE)  # reintento

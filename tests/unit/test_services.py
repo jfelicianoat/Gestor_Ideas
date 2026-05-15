@@ -62,6 +62,9 @@ class FakeJobRepository:
     def list_pending(self) -> list[Job]:
         return [job for job in self.items.values() if job.estado == EstadoJob.PENDIENTE]
 
+    def list_by_estado(self, estado: EstadoJob) -> list[Job]:
+        return [job for job in self.items.values() if job.estado == estado]
+
     def update(self, job: Job) -> Job:
         if self.fail_next_update:
             self.fail_next_update = False
@@ -239,6 +242,19 @@ class TestJobService:
         with pytest.raises(ApplicationStateError):
             service.complete_job(job.id, "Resultado")
 
+    def test_recover_in_progress_jobs_reencola_jobs_stale(self) -> None:
+        idea_repo = FakeIdeaRepository()
+        job_repo = FakeJobRepository()
+        idea = idea_repo.create(Idea(titulo="Idea", contenido_raw="Texto"))
+        job = job_repo.create(Job(idea_id=idea.id, estado=EstadoJob.EN_CURSO))
+        service = JobService(job_repo, idea_repo)
+
+        recovered = service.recover_in_progress_jobs()
+
+        assert [item.id for item in recovered] == [job.id]
+        assert recovered[0].estado == EstadoJob.PENDIENTE
+        assert recovered[0].resultado == "Recuperado tras cierre inesperado"
+
 
 class SuccessfulHandler:
     """Handler async fake que completa jobs."""
@@ -252,6 +268,13 @@ class FailingHandler:
 
     async def handle(self, job: Job) -> str:
         raise RuntimeError("fallo de integración")
+
+
+class EmptyResultHandler:
+    """Handler async fake que devuelve un resultado inválido."""
+
+    async def handle(self, job: Job) -> str:
+        return " "
 
 
 class TestAsyncJobRunner:
@@ -296,3 +319,13 @@ class TestAsyncJobRunner:
         assert [job.id for job in processed] == [first.id]
         assert job_repo.items[first.id].estado == EstadoJob.COMPLETADO
         assert job_repo.items[second.id].estado == EstadoJob.PENDIENTE
+
+    def test_process_one_no_deja_en_curso_si_complete_falla(self) -> None:
+        service, idea, job_repo = self._build_service()
+        job = job_repo.create(Job(idea_id=idea.id, max_intentos=2))
+        runner = AsyncJobRunner(service, EmptyResultHandler())
+
+        processed = asyncio.run(runner.process_one(job.id))
+
+        assert processed.estado == EstadoJob.PENDIENTE
+        assert processed.resultado == "El resultado del job no puede estar vacío"

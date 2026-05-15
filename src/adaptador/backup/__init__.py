@@ -1,1 +1,3 @@
-# Sistema de backups automáticos versionados
+from adaptador.backup.engine import BackupEngine, BackupEntry
+
+__all__ = ["BackupEngine", "BackupEntry"]

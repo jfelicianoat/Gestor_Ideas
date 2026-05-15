@@ -61,7 +61,7 @@ class IdeaService:
             created = self.idea_repository.create(idea)
         except Exception as exc:
             logger.exception("No se pudo crear la idea")
-            raise PersistenceOperationError("No se pudo crear la idea") from exc
+            raise PersistenceOperationError(f"No se pudo crear la idea: {exc}") from exc
 
         logger.info(
             "Idea creada: id={} tipo_entrada={} estado={}",
@@ -154,3 +154,14 @@ class IdeaService:
 
         logger.info("Contenido enriquecido guardado: idea_id={}", updated.id)
         return updated
+
+    def delete_idea(self, idea_id: UUID) -> None:
+        self.get_idea_or_raise(idea_id)
+        try:
+            self.idea_repository.delete(idea_id)
+        except Exception as exc:
+            logger.exception("No se pudo eliminar la idea: id={}", idea_id)
+            raise PersistenceOperationError(
+                f"No se pudo eliminar la idea: {idea_id}"
+            ) from exc
+        logger.info("Idea eliminada: id={}", idea_id)

@@ -118,7 +118,12 @@ class MainWindow(QMainWindow):
         session = Session(self.engine)
         idea_repo = SQLIdeaRepository(session)
         job_repo = SQLJobRepository(session)
-        job_service = JobService(job_repository=job_repo, idea_repository=idea_repo)
+        # Servicios dedicados para el hilo de procesamiento
+        idea_service = IdeaService(idea_repository=idea_repo)
+        job_service = JobService(
+            job_repository=job_repo,
+            idea_repository=idea_repo,
+        )
         job_service.recover_in_progress_jobs()
 
         config = load_config()
@@ -128,14 +133,22 @@ class MainWindow(QMainWindow):
             max_retries=config.jobs.max_retries,
             backoff_base_seconds=config.jobs.backoff_base_seconds,
         )
-        transcriber = FasterWhisperTranscriber(model_size=config.whisper.model_size)
+        transcriber = FasterWhisperTranscriber(
+            model_size=config.whisper.model_size,
+        )
         handler = AIJobHandler(
             idea_repository=idea_repo,
             ollama_client=ollama,
             transcriber=transcriber,
             default_model=config.ollama.default_model,
         )
-        return AsyncJobRunner(job_service, handler, JobMetrics()), session.close
+        runner = AsyncJobRunner(
+            job_service,
+            handler,
+            JobMetrics(),
+            idea_service=idea_service,
+        )
+        return runner, session.close
 
     def _setup_window(self) -> None:
         self.setWindowTitle("Adaptador de Ideas")
@@ -173,17 +186,19 @@ class MainWindow(QMainWindow):
     def _register_screens(self) -> None:
         ideas_screen = IdeasScreen()
         jobs_screen = JobsScreen()
+        kanban_screen = KanbanScreen()
         if self._services_inited:
             ideas_screen.set_services(self._idea_service, self._job_service)
             jobs_screen.set_services(
                 self._job_service, self._idea_service, self._job_runner
             )
+            kanban_screen.set_services(self._idea_service)
 
         screens: list[tuple[ScreenType, QWidget]] = [
             (ScreenType.IDEAS, ideas_screen),
             (ScreenType.JOBS, jobs_screen),
             (ScreenType.REPO, RepoScreen()),
-            (ScreenType.KANBAN, KanbanScreen()),
+            (ScreenType.KANBAN, kanban_screen),
             (ScreenType.SETTINGS, SettingsScreen()),
         ]
         for screen_type, widget in screens:
@@ -204,6 +219,9 @@ class MainWindow(QMainWindow):
                 jobs.set_services(
                     self._job_service, self._idea_service, self._job_runner
                 )
+            kanban = self._screens.get(ScreenType.KANBAN)
+            if isinstance(kanban, KanbanScreen):
+                kanban.set_services(self._idea_service)
         self._navigate_to(screen_type)
 
     def _navigate_to(self, screen_type: ScreenType) -> None:
@@ -243,11 +261,47 @@ class MainWindow(QMainWindow):
         return self._screens.get(screen_type)
 
     def closeEvent(self, event: Any) -> None:  # noqa: N802
-        """Cierra la sesión activa al cerrar la ventana."""
-        if hasattr(self, "_ui_session") and self._ui_session is not None:
+        """Espera al hilo de procesamiento y cierra la sesión."""
+        # Verificar si hay un job en curso
+        jobs_screen = self._screens.get(ScreenType.JOBS)
+        processor_running = False
+        if isinstance(jobs_screen, JobsScreen):
+            processor = getattr(jobs_screen, "_processor", None)
+            if processor is not None and processor.isRunning():
+                processor_running = True
+
+        # Confirmar cierre si hay procesamiento activo
+        if processor_running:
+            reply = QMessageBox.question(
+                self,
+                "Procesamiento en curso",
+                "Hay un job de IA en curso.\n"
+                "Si cierras ahora, el job se"
+                " recuperará al reiniciar.\n\n"
+                "¿Cerrar de todos modos?",
+                QMessageBox.StandardButton.Yes
+                | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply == QMessageBox.StandardButton.No:
+                event.ignore()
+                return
+
+            # Esperar al hilo con timeout de 3 segundos
+            if processor is not None:
+                processor.requestInterruption()
+                if not processor.wait(3000):
+                    logger.warning(
+                        "Hilo de procesamiento no terminó"
+                        " en 3s, forzando cierre"
+                    )
+
+        # Cerrar sesión de UI
+        if hasattr(self, "_ui_session") and self._ui_session:
             try:
                 self._ui_session.close()
             except Exception:
                 pass
             self._ui_session = None
+
         super().closeEvent(event)

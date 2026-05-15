@@ -15,7 +15,7 @@ from typing import Protocol
 from uuid import UUID
 
 from adaptador.domain.entities import Idea, Job
-from adaptador.domain.enums import EstadoKanban
+from adaptador.domain.enums import EstadoJob, EstadoKanban
 
 
 class IdeaRepository(Protocol):
@@ -37,6 +37,10 @@ class IdeaRepository(Protocol):
         """Actualiza una idea existente y la devuelve con datos frescos."""
         ...
 
+    def delete(self, idea_id: UUID) -> None:
+        """Elimina una idea existente."""
+        ...
+
 
 class JobRepository(Protocol):
     """Contrato de persistencia para la entidad Job."""
@@ -53,6 +57,14 @@ class JobRepository(Protocol):
         """Devuelve todos los jobs en estado pendiente."""
         ...
 
+    def list_by_estado(self, estado: EstadoJob) -> list[Job]:
+        """Devuelve todos los jobs con el estado indicado."""
+        ...
+
     def update(self, job: Job) -> Job:
         """Actualiza un job existente y lo devuelve con datos frescos."""
+        ...
+
+    def delete(self, job_id: UUID) -> None:
+        """Elimina un job existente."""
         ...

@@ -112,6 +112,36 @@ class JobService:
                 "No se pudieron listar jobs pendientes"
             ) from exc
 
+    def recover_in_progress_jobs(self) -> list[Job]:
+        """
+        Recupera jobs que quedaron EN_CURSO tras un cierre inesperado.
+
+        Si aún tienen intentos disponibles vuelven a PENDIENTE. Si ya agotaron
+        intentos, quedan FALLIDO con una causa explícita.
+        """
+        try:
+            stale_jobs = self.job_repository.list_by_estado(EstadoJob.EN_CURSO)
+        except Exception as exc:
+            logger.exception("No se pudieron listar jobs en curso para recuperación")
+            raise PersistenceOperationError(
+                "No se pudieron recuperar jobs en curso"
+            ) from exc
+
+        recovered: list[Job] = []
+        for job in stale_jobs:
+            try:
+                job.cambiar_estado(EstadoJob.FALLIDO)
+                job.resultado = "Recuperado tras cierre inesperado"
+                if job.puede_reintentar():
+                    job.cambiar_estado(EstadoJob.PENDIENTE)
+                recovered.append(self._update_job(job, "recuperar job en curso"))
+            except DomainError as exc:
+                raise ApplicationStateError(str(exc)) from exc
+
+        if recovered:
+            logger.warning("Jobs en curso recuperados: total={}", len(recovered))
+        return recovered
+
     def start_job(self, job_id: UUID) -> Job:
         """Marca un job pendiente como en curso y registra un intento."""
         job = self.get_job_or_raise(job_id)
@@ -180,6 +210,17 @@ class JobService:
             retry,
         )
         return updated
+
+    def delete_job(self, job_id: UUID) -> None:
+        self.get_job_or_raise(job_id)
+        try:
+            self.job_repository.delete(job_id)
+        except Exception as exc:
+            logger.exception("No se pudo eliminar el job: id={}", job_id)
+            raise PersistenceOperationError(
+                f"No se pudo eliminar el job: {job_id}"
+            ) from exc
+        logger.info("Job eliminado: id={}", job_id)
 
     def cancel_job(self, job_id: UUID) -> Job:
         """Cancela un job pendiente."""

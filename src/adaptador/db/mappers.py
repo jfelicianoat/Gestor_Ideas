@@ -75,6 +75,20 @@ def job_to_model(job: Job) -> JobModel:
     )
 
 
+def _safe_json_loads(raw: str | None) -> dict:
+    """Parsea JSON garantizando que devuelva un dict, nunca None."""
+    if not raw:
+        return {}
+    stripped = raw.strip()
+    if stripped in ("null", "", "{}"):
+        return {}
+    try:
+        parsed = json.loads(stripped)
+        return parsed if isinstance(parsed, dict) else {}
+    except json.JSONDecodeError:
+        return {}
+
+
 def model_to_job(model: JobModel) -> Job:
     """Convierte un modelo ORM JobModel a entidad de dominio."""
     return Job(
@@ -84,7 +98,7 @@ def model_to_job(model: JobModel) -> Job:
         estado=EstadoJob(model.estado),
         intentos=model.intentos,
         max_intentos=model.max_intentos,
-        payload=json.loads(model.payload) if model.payload else {},
+        payload=_safe_json_loads(model.payload),
         resultado=model.resultado,
         fecha_creado=model.fecha_creado,
         fecha_actualizado=model.fecha_actualizado,

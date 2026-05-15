@@ -6,13 +6,16 @@ inyectado, aplica timeout con asyncio y delega las transiciones a JobService.
 """
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 from uuid import UUID
 
 from loguru import logger
 
+from adaptador.ai.errors import AITimeoutError
+from adaptador.ai.metrics import JobMetrics
 from adaptador.domain.entities import Job
+from adaptador.domain.enums import EstadoJob
 from adaptador.services.job_service import JobService
 
 
@@ -30,6 +33,10 @@ class AsyncJobRunner:
 
     job_service: JobService
     handler: JobHandler
+    metrics: JobMetrics = field(default_factory=JobMetrics)
+    # Servicio de ideas para guardar el resultado enriquecido.
+    # Si es None, el resultado solo se guarda en el job.
+    idea_service: Any = field(default=None)
 
     async def process_one(self, job_id: UUID) -> Job:
         """Procesa un job por ID y persiste su estado final."""
@@ -46,16 +53,68 @@ class AsyncJobRunner:
                 started.id,
                 started.timeout_segundos,
             )
-            return self.job_service.fail_job(
+            failed = self.job_service.fail_job(
                 started.id,
                 f"Timeout tras {started.timeout_segundos}s",
             )
+            self.metrics.record_failed(
+                retried=failed.estado == EstadoJob.PENDIENTE,
+                timed_out=True,
+            )
+            return failed
+        except AITimeoutError as exc:
+            logger.warning("Timeout de integración IA: id={} error={}", started.id, exc)
+            failed = self.job_service.fail_job(started.id, str(exc))
+            self.metrics.record_failed(
+                retried=failed.estado == EstadoJob.PENDIENTE,
+                timed_out=True,
+            )
+            return failed
         except Exception as exc:
             logger.exception("Error procesando job: id={}", started.id)
             message = str(exc) or exc.__class__.__name__
-            return self.job_service.fail_job(started.id, message)
+            failed = self.job_service.fail_job(started.id, message)
+            self.metrics.record_failed(retried=failed.estado == EstadoJob.PENDIENTE)
+            return failed
 
-        return self.job_service.complete_job(started.id, result)
+        try:
+            completed = self.job_service.complete_job(started.id, result)
+        except Exception as exc:
+            logger.exception("Error completando job: id={}", started.id)
+            message = str(exc) or exc.__class__.__name__
+            failed = self.job_service.fail_job(started.id, message)
+            self.metrics.record_failed(retried=failed.estado == EstadoJob.PENDIENTE)
+            return failed
+
+        # Guardar el resultado como contenido enriquecido de la idea
+        self._save_enriched_content(completed, result)
+
+        self.metrics.record_completed()
+        return completed
+
+    def _save_enriched_content(
+        self, job: Job, result: str
+    ) -> None:
+        """Guarda el resultado IA en la idea asociada al job."""
+        if self.idea_service is None:
+            return
+        try:
+            self.idea_service.set_enriched_content(
+                job.idea_id, result
+            )
+            logger.info(
+                "Contenido enriquecido guardado: idea_id={}",
+                job.idea_id,
+            )
+        except Exception as exc:
+            # No fallar el job por un error al guardar
+            # el contenido enriquecido (ya está completado)
+            logger.warning(
+                "No se pudo guardar contenido enriquecido:"
+                " idea_id={} error={}",
+                job.idea_id,
+                exc,
+            )
 
     async def process_pending(self, *, limit: int | None = None) -> list[Job]:
         """Procesa jobs pendientes de forma secuencial y devuelve resultados."""

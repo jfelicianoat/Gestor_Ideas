@@ -80,10 +80,10 @@ class Job:
     reintentos con backoff en caso de fallo.
     """
 
+    # FK a la idea que originó el job (obligatorio — sin default)
+    idea_id: UUID
     # Identificador único del job
     id: UUID = field(default_factory=uuid4)
-    # FK a la idea que originó el job
-    idea_id: UUID = field(default_factory=uuid4)
     # Tipo de procesamiento IA
     tipo_job: TipoJob = TipoJob.ENRIQUECIMIENTO
     # Estado actual del job

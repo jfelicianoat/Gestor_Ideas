@@ -308,21 +308,25 @@ class JobsScreen(QWidget):
 
     def _do_load(self) -> None:
         try:
-            pending = self._job_service.list_pending()  # type: ignore[union-attr]
+            all_jobs = self._job_service.job_repository.list_by_estado(  # type: ignore[union-attr]
+                EstadoJob.PENDIENTE
+            )
+            all_jobs += self._job_service.job_repository.list_by_estado(  # type: ignore[union-attr]
+                EstadoJob.EN_CURSO
+            )
+            all_jobs += self._job_service.job_repository.list_by_estado(  # type: ignore[union-attr]
+                EstadoJob.COMPLETADO
+            )
+            all_jobs += self._job_service.job_repository.list_by_estado(  # type: ignore[union-attr]
+                EstadoJob.FALLIDO
+            )
+            all_jobs += self._job_service.job_repository.list_by_estado(  # type: ignore[union-attr]
+                EstadoJob.CANCELADO
+            )
         except Exception as e:
             self._state_view.show_state(
-                StateView.ERROR,
-                title="Error al cargar jobs",
+                StateView.ERROR, title="Error al cargar jobs",
                 description=str(e),
-            )
-            return
-
-        if not pending:
-            self._state_view.show_state(
-                StateView.EMPTY,
-                icon="⚡",
-                title="Sin jobs activos",
-                description="No hay procesamientos IA pendientes.",
             )
             return
 
@@ -332,7 +336,7 @@ class JobsScreen(QWidget):
             if item.widget():
                 item.widget().deleteLater()
 
-        for job in pending:
+        for job in all_jobs:
             tipo = _TIPO_LABELS.get(job.tipo_job, job.tipo_job.value.capitalize())
             estado = _STATUS_LABELS.get(job.estado, job.estado.value.capitalize())
             color = _STATUS_COLORS.get(job.estado, COLORS["text_muted"])
@@ -343,17 +347,18 @@ class JobsScreen(QWidget):
             )
 
             card = _JobCard(
-                tipo,
-                estado,
-                color,
-                idea_title,
-                intentos,
-                job_id=job.id,
-                on_delete=self._on_delete_job,
+                tipo, estado, color, idea_title, intentos,
+                job_id=job.id, on_delete=self._on_delete_job,
             )
             self.add_job_card(card)
 
-        self._state_view.show_state(StateView.CONTENT)
+        if not all_jobs:
+            self._state_view.show_state(
+                StateView.EMPTY, icon="⚡", title="Sin jobs",
+                description="No hay jobs todavía.",
+            )
+        else:
+            self._state_view.show_state(StateView.CONTENT)
 
     def _on_delete_job(self, job_id: UUID) -> None:
         if not self._job_service:

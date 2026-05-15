@@ -8,7 +8,7 @@
 # --- Conexión con Ollama (LLM en LAN) ---
 ollama:
   # URL base del servidor Ollama en la red local
-  url: "http://192.168.1.100:11434"
+  url: "http://192.168.1.52:11434"
   # Modelo por defecto para enriquecimiento de ideas
   default_model: "llama3.2"
   # Tiempo máximo de espera por respuesta (en segundos)
