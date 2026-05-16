@@ -168,7 +168,18 @@ class _JobProcessor(QThread):
         for job in pending:
             if self.isInterruptionRequested():
                 break
-            await runner.process_one(job.id)
+                
+            job_task = asyncio.create_task(runner.process_one(job.id))
+            while not job_task.done():
+                if self.isInterruptionRequested():
+                    job_task.cancel()
+                    break
+                await asyncio.sleep(0.1)
+                
+            try:
+                await job_task
+            except asyncio.CancelledError:
+                break
 
 
 class JobsScreen(QWidget):

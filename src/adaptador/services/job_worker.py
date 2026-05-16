@@ -53,14 +53,17 @@ class JobWorkerService:
         )
 
     async def stop(self) -> None:
-        """Solicita parada y espera a que termine el ciclo actual."""
+        """Solicita parada y cancela el ciclo actual."""
         if self._task is None:
             return
         if self._stop_event is not None:
             self._stop_event.set()
 
         try:
+            self._task.cancel()
             await self._task
+        except asyncio.CancelledError:
+            pass
         finally:
             self._task = None
             self._stop_event = None
