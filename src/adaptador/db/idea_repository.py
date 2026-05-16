@@ -3,7 +3,7 @@ from uuid import UUID
 from sqlmodel import Session, select
 
 from adaptador.db.mappers import idea_to_model, model_to_idea
-from adaptador.db.models import IdeaModel, JobModel
+from adaptador.db.models import IdeaModel
 from adaptador.domain.entities import Idea
 from adaptador.domain.enums import EstadoKanban
 
@@ -55,14 +55,17 @@ class SQLIdeaRepository:
         self._session.refresh(model)
         return model_to_idea(model)
 
+    def list_by_ids(self, ids: list[UUID]) -> dict[UUID, Idea]:
+        if not ids:
+            return {}
+        str_ids = [str(i) for i in ids]
+        statement = select(IdeaModel).where(IdeaModel.id.in_(str_ids))
+        models = self._session.exec(statement).all()
+        return {UUID(m.id): model_to_idea(m) for m in models}
+
     def delete(self, idea_id: UUID) -> None:
         model = self._session.get(IdeaModel, str(idea_id))
         if model is None:
             raise ValueError(f"Idea no encontrada: {idea_id}")
-        jobs = self._session.exec(
-            select(JobModel).where(JobModel.idea_id == str(idea_id))
-        ).all()
-        for job in jobs:
-            self._session.delete(job)
         self._session.delete(model)
         self._commit_or_rollback()

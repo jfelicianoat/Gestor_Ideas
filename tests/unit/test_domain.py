@@ -41,6 +41,7 @@ class TestKanbanTransiciones:
         "origen, destino",
         [
             (EstadoKanban.NUEVA, EstadoKanban.EN_PROCESO),
+            (EstadoKanban.EN_PROCESO, EstadoKanban.NUEVA),
             (EstadoKanban.EN_PROCESO, EstadoKanban.REVISION),
             (EstadoKanban.REVISION, EstadoKanban.ARCHIVADA),
             (EstadoKanban.REVISION, EstadoKanban.EN_PROCESO),
@@ -58,7 +59,6 @@ class TestKanbanTransiciones:
         [
             (EstadoKanban.NUEVA, EstadoKanban.REVISION),
             (EstadoKanban.NUEVA, EstadoKanban.ARCHIVADA),
-            (EstadoKanban.EN_PROCESO, EstadoKanban.NUEVA),
             (EstadoKanban.EN_PROCESO, EstadoKanban.ARCHIVADA),
             (EstadoKanban.ARCHIVADA, EstadoKanban.NUEVA),
             (EstadoKanban.ARCHIVADA, EstadoKanban.REVISION),
@@ -79,9 +79,7 @@ class TestKanbanTransiciones:
     def test_error_hereda_de_domain_error(self) -> None:
         """InvalidStateTransitionError es subclase de DomainError."""
         with pytest.raises(DomainError):
-            validate_kanban_transition(
-                EstadoKanban.NUEVA, EstadoKanban.ARCHIVADA
-            )
+            validate_kanban_transition(EstadoKanban.NUEVA, EstadoKanban.ARCHIVADA)
 
 
 # ============================================================
@@ -102,9 +100,7 @@ class TestJobTransiciones:
             (EstadoJob.FALLIDO, EstadoJob.PENDIENTE),
         ],
     )
-    def test_transicion_job_valida(
-        self, origen: EstadoJob, destino: EstadoJob
-    ) -> None:
+    def test_transicion_job_valida(self, origen: EstadoJob, destino: EstadoJob) -> None:
         """Las transiciones definidas no lanzan error."""
         validate_job_transition(origen, destino)
 

@@ -7,7 +7,7 @@ inyectado, aplica timeout con asyncio y delega las transiciones a JobService.
 
 import asyncio
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Any, Protocol
 from uuid import UUID
 
 from loguru import logger
@@ -88,20 +88,17 @@ class AsyncJobRunner:
 
         # Guardar el resultado como contenido enriquecido de la idea
         self._save_enriched_content(completed, result)
+        self._mark_idea_ready_for_review(completed)
 
         self.metrics.record_completed()
         return completed
 
-    def _save_enriched_content(
-        self, job: Job, result: str
-    ) -> None:
+    def _save_enriched_content(self, job: Job, result: str) -> None:
         """Guarda el resultado IA en la idea asociada al job."""
         if self.idea_service is None:
             return
         try:
-            self.idea_service.set_enriched_content(
-                job.idea_id, result
-            )
+            self.idea_service.set_enriched_content(job.idea_id, result)
             logger.info(
                 "Contenido enriquecido guardado: idea_id={}",
                 job.idea_id,
@@ -110,8 +107,20 @@ class AsyncJobRunner:
             # No fallar el job por un error al guardar
             # el contenido enriquecido (ya está completado)
             logger.warning(
-                "No se pudo guardar contenido enriquecido:"
-                " idea_id={} error={}",
+                "No se pudo guardar contenido enriquecido: idea_id={} error={}",
+                job.idea_id,
+                exc,
+            )
+
+    def _mark_idea_ready_for_review(self, job: Job) -> None:
+        """Avanza la idea a revisión si el job se completó correctamente."""
+        try:
+            moved = self.job_service.mark_idea_ready_for_review(job.idea_id)
+            if moved:
+                logger.info("Idea avanzada a revisión: idea_id={}", job.idea_id)
+        except Exception as exc:
+            logger.warning(
+                "No se pudo avanzar idea a revisión: idea_id={} error={}",
                 job.idea_id,
                 exc,
             )

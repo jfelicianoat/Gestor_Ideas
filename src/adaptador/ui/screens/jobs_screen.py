@@ -155,13 +155,20 @@ class _JobProcessor(QThread):
                     runner, cleanup = built
                 else:
                     runner = built
-            asyncio.run(runner.process_pending(limit=self.MAX_JOBS_PER_BATCH))
+            asyncio.run(self._process_until_interrupted(runner))
         except Exception as exc:
             self.failed.emit(str(exc))
         finally:
             if cleanup is not None:
                 cleanup()
             self.finished.emit()
+
+    async def _process_until_interrupted(self, runner: Any) -> None:
+        pending = runner.job_service.list_pending()[: self.MAX_JOBS_PER_BATCH]
+        for job in pending:
+            if self.isInterruptionRequested():
+                break
+            await runner.process_one(job.id)
 
 
 class JobsScreen(QWidget):
@@ -173,6 +180,7 @@ class JobsScreen(QWidget):
         self._runner: Any = None
         self._processor: _JobProcessor | None = None
         self._last_process_error: str | None = None
+        self._load_epoch = 0
         self._setup_ui()
 
     def set_services(
@@ -258,9 +266,7 @@ class JobsScreen(QWidget):
 
         # Protección contra doble-clic: verificar si ya hay un hilo activo
         if self._processor is not None and self._processor.isRunning():
-            QMessageBox.information(
-                self, "Info", "Ya hay un procesamiento en curso."
-            )
+            QMessageBox.information(self, "Info", "Ya hay un procesamiento en curso.")
             return
 
         try:
@@ -286,13 +292,14 @@ class JobsScreen(QWidget):
     def _on_process_finished(self) -> None:
         self._process_btn.setEnabled(True)
         self._process_btn.setText("▶ Procesar pendientes")
-        if self._last_process_error is None:
+        if self._last_process_error is None and self.isVisible():
             QMessageBox.information(self, "Listo", "Procesamiento completado.")
         self._load_jobs()
 
     def _on_process_failed(self, message: str) -> None:
         self._last_process_error = message
-        QMessageBox.warning(self, "Error", f"Procesamiento incompleto: {message}")
+        if self.isVisible():
+            QMessageBox.warning(self, "Error", f"Procesamiento incompleto: {message}")
 
     def _load_jobs(self) -> None:
         if not self._job_service:
@@ -303,10 +310,12 @@ class JobsScreen(QWidget):
                 description="Servicio de jobs no disponible.",
             )
             return
+        self._load_epoch += 1
         self._state_view.show_state(StateView.LOADING, title="Cargando jobs...")
         QTimer.singleShot(0, self._do_load)
 
     def _do_load(self) -> None:
+        epoch = self._load_epoch
         try:
             all_jobs = self._job_service.job_repository.list_by_estado(  # type: ignore[union-attr]
                 EstadoJob.PENDIENTE
@@ -325,9 +334,13 @@ class JobsScreen(QWidget):
             )
         except Exception as e:
             self._state_view.show_state(
-                StateView.ERROR, title="Error al cargar jobs",
+                StateView.ERROR,
+                title="Error al cargar jobs",
                 description=str(e),
             )
+            return
+
+        if epoch != self._load_epoch:
             return
 
         # Clear old items
@@ -336,12 +349,22 @@ class JobsScreen(QWidget):
             if item.widget():
                 item.widget().deleteLater()
 
+        # Batch-load idea titles (evita N+1)
+        idea_ids = list({j.idea_id for j in all_jobs})
+        idea_map: dict[UUID, str] = {}
+        try:
+            if self._idea_service:
+                ideas_dict = self._idea_service.idea_repository.list_by_ids(idea_ids)  # type: ignore[union-attr]
+                idea_map = {uid: (i.titulo or str(uid)[:8]) for uid, i in ideas_dict.items()}
+        except Exception:
+            pass
+
         for job in all_jobs:
             tipo = _TIPO_LABELS.get(job.tipo_job, job.tipo_job.value.capitalize())
             estado = _STATUS_LABELS.get(job.estado, job.estado.value.capitalize())
             color = _STATUS_COLORS.get(job.estado, COLORS["text_muted"])
 
-            idea_title = self._get_idea_title(job.idea_id)
+            idea_title = idea_map.get(job.idea_id, str(job.idea_id)[:8])
             intentos = (
                 f"Intento {job.intentos}/{job.max_intentos}" if job.intentos > 0 else ""
             )
@@ -351,6 +374,9 @@ class JobsScreen(QWidget):
                 job_id=job.id, on_delete=self._on_delete_job,
             )
             self.add_job_card(card)
+
+        if epoch != self._load_epoch:
+            return
 
         if not all_jobs:
             self._state_view.show_state(

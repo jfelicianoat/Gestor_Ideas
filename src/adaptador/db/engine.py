@@ -11,7 +11,7 @@ Referencia: CONTEXT_PACK.md DA-02, SKILLS.md §3.5
 from pathlib import Path
 
 from sqlalchemy import event
-from sqlmodel import Session, SQLModel
+from sqlmodel import Session, SQLModel, text
 from sqlmodel import create_engine as sqlmodel_create_engine
 
 
@@ -73,6 +73,20 @@ def create_tables(engine) -> None:  # type: ignore[no-untyped-def]
     import adaptador.db.models  # noqa: F401
 
     SQLModel.metadata.create_all(engine)
+    ensure_performance_indexes(engine)
+
+
+def ensure_performance_indexes(engine) -> None:  # type: ignore[no-untyped-def]
+    """Crea índices idempotentes necesarios para consultas frecuentes."""
+    with Session(engine) as session:
+        session.exec(
+            text(
+                "CREATE INDEX IF NOT EXISTS "
+                "ix_ideas_estado_kanban ON ideas (estado_kanban)"
+            )
+        )
+        session.exec(text("CREATE INDEX IF NOT EXISTS ix_jobs_estado ON jobs (estado)"))
+        session.commit()
 
 
 def get_session(engine) -> Session:  # type: ignore[no-untyped-def]

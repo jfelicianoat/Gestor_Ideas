@@ -10,6 +10,7 @@ from adaptador.services.errors import (
 from adaptador.services.idea_service import IdeaService
 from adaptador.services.job_runner import AsyncJobRunner, JobHandler
 from adaptador.services.job_service import JobService
+from adaptador.services.job_worker import JobWorkerService, JobWorkerStateError
 
 __all__ = [
     "ApplicationError",
@@ -19,6 +20,8 @@ __all__ = [
     "IdeaService",
     "JobHandler",
     "JobService",
+    "JobWorkerService",
+    "JobWorkerStateError",
     "PersistenceOperationError",
     "ValidationAppError",
 ]

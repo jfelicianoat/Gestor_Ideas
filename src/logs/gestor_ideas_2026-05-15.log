@@ -1,0 +1,4 @@
+2026-05-15 11:32:59 | INFO     | __main__:_config_logging - Logs en D:\Desarrollo\Adaptador de ideas\src\logs
+2026-05-15 11:32:59 | INFO     | __main__:main - Iniciando Gestor de Ideas v0.1.0
+2026-05-15 11:32:59 | INFO     | __main__:main - Project root: D:\Desarrollo\Adaptador de ideas\src
+2026-05-15 11:32:59 | ERROR    | __main__:main - Error al cargar configuración: Archivo de configuración no encontrado: D:\Desarrollo\Adaptador de ideas\src\config\app.yaml

@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from typing import Any
 from uuid import UUID
 
 from PySide6.QtCore import Qt, QTimer
@@ -123,11 +124,13 @@ class _IdeaListItem(QFrame):
         self,
         idea: Idea,
         on_delete: Callable[[UUID], None] | None = None,
+        on_detail: Callable[[Idea], None] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.idea = idea
         self.on_delete = on_delete
+        self.on_detail = on_detail
         self.setObjectName("ideaListItem")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self._setup_ui()
@@ -199,6 +202,10 @@ class _IdeaListItem(QFrame):
 
     def set_checked(self, checked: bool) -> None:
         self._checkbox.setChecked(checked)
+
+    def mouseDoubleClickEvent(self, event: Any) -> None:  # type: ignore[override]
+        if self.on_detail:
+            self.on_detail(self.idea)
 
     def _on_delete_clicked(self) -> None:
         if self.on_delete:
@@ -299,6 +306,7 @@ class _IdeaListWidget(QWidget):
         layout.addLayout(btn_layout)
 
     on_item_delete: Callable[[UUID], None] | None = None
+    on_item_detail: Callable[[Idea], None] | None = None
 
     def set_items(self, ideas: list[Idea]) -> None:
         """Reemplaza la lista completa de ideas, destruyendo las anteriores."""
@@ -311,7 +319,9 @@ class _IdeaListWidget(QWidget):
         self._items = []
 
         for idea in ideas:
-            item = _IdeaListItem(idea, on_delete=self.on_item_delete)
+            item = _IdeaListItem(
+                idea, on_delete=self.on_item_delete, on_detail=self.on_item_detail
+            )
             item._checkbox.toggled.connect(self._update_enqueue_btn)
             self._all_items.append(item)
             self._list_layout.addWidget(item)
@@ -341,8 +351,7 @@ class _IdeaListWidget(QWidget):
             self._items = [
                 item
                 for item in self._all_items
-                if q in item.idea.titulo.lower()
-                or q in item.idea.contenido_raw.lower()
+                if q in item.idea.titulo.lower() or q in item.idea.contenido_raw.lower()
             ]
         self._refresh_list()
 
@@ -372,8 +381,9 @@ class IdeasScreen(QWidget):
     ) -> None:
         super().__init__(parent)
         self.setObjectName("ideasScreen")
-        self._idea_service = idea_service
-        self._job_service = job_service
+        self._idea_service: IdeaService | None = None
+        self._job_service: JobService | None = None
+        self._load_epoch = 0
         self._setup_ui()
 
     def set_services(self, idea_service: IdeaService, job_service: JobService) -> None:
@@ -395,6 +405,7 @@ class IdeasScreen(QWidget):
         content = _IdeaListWidget()
         self._idea_list = content
         self._idea_list.on_item_delete = self._on_delete_idea
+        self._idea_list.on_item_detail = self._on_show_detail
 
         self._idea_list._enqueue_btn.clicked.connect(self._on_enqueue_selected)
         self._state_view.set_content_widget(content)
@@ -411,6 +422,46 @@ class IdeasScreen(QWidget):
             self._load_ideas()
         except Exception as e:
             self._capture.on_save_result(False, str(e))
+
+    def _on_show_detail(self, idea: Idea) -> None:
+        from PySide6.QtWidgets import QDialog, QTextBrowser, QVBoxLayout
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle(idea.titulo or "Sin título")
+        dlg.setMinimumSize(600, 500)
+        dlg.setStyleSheet(
+            f"background: {COLORS['bg_primary']}; color: {COLORS['text_primary']};"
+        )
+
+        layout = QVBoxLayout(dlg)
+        layout.setSpacing(16)
+
+        browser = QTextBrowser()
+        browser.setOpenExternalLinks(True)
+        browser.setStyleSheet(
+            f"background: {COLORS['bg_card']}; color: {COLORS['text_primary']};"
+            f" border: 1px solid {COLORS['border']}; border-radius: 8px;"
+            f" padding: 16px; font-size: 14px;"
+        )
+
+        html = f"<h2>{idea.titulo or 'Sin título'}</h2>"
+        html += f"<p style='color:{COLORS['text_secondary']}'><b>Original:</b><br>{idea.contenido_raw}</p>"
+        if idea.contenido_enriquecido:
+            html += (
+                f"<hr><p style='color:{COLORS['success']}'><b>🔮 Resultado IA:</b></p>"
+            )
+            html += f"<p>{idea.contenido_enriquecido}</p>"
+        else:
+            html += f"<hr><p style='color:{COLORS['text_muted']}'>Sin procesar por IA todavía.</p>"
+
+        fecha = idea.fecha_creacion.strftime("%d/%m/%Y %H:%M")
+        estado = idea.estado_kanban.value.replace("_", " ").title()
+        html += f"<hr><p style='color:{COLORS['text_muted']}; font-size: 12px;'>{fecha} · {estado}</p>"
+
+        browser.setHtml(html)
+        layout.addWidget(browser)
+
+        dlg.exec()
 
     def _on_delete_idea(self, idea_id: UUID) -> None:
         if not self._idea_service:
@@ -462,12 +513,11 @@ class IdeasScreen(QWidget):
             try:
                 safe_content = idea.contenido_raw.replace("{", "{{").replace("}", "}}")
                 prompt = self._PROMPT_TEMPLATE.format(idea=safe_content)
-                self._job_service.enqueue_job(
+                self._job_service.enqueue_job_and_mark_processing(
                     idea_id=idea.id,
                     tipo_job=TipoJob.ENRIQUECIMIENTO,
                     payload={"prompt": prompt},
                 )
-                self._idea_service.move_idea(idea.id, EstadoKanban.EN_PROCESO)
                 ok += 1
             except Exception as e:
                 errors.append(f"  {idea.titulo or 'sin título'}: {e}")
@@ -492,11 +542,15 @@ class IdeasScreen(QWidget):
             )
             return
 
+        self._load_epoch += 1
         self._state_view.show_state(StateView.LOADING, title="Cargando ideas...")
         QTimer.singleShot(0, self._do_load)
 
     def _do_load(self) -> None:
+        epoch = self._load_epoch
         try:
+            if epoch != self._load_epoch:
+                return
             ideas = self._idea_service.list_by_estado(EstadoKanban.NUEVA)  # type: ignore[union-attr]
             ideas += self._idea_service.list_by_estado(EstadoKanban.EN_PROCESO)  # type: ignore[union-attr]
         except Exception as e:
@@ -505,6 +559,9 @@ class IdeasScreen(QWidget):
                 title="Error al cargar",
                 description=str(e),
             )
+            return
+
+        if epoch != self._load_epoch:
             return
 
         if not ideas:

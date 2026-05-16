@@ -16,6 +16,7 @@ from adaptador.services.errors import (
 from adaptador.services.idea_service import IdeaService
 from adaptador.services.job_runner import AsyncJobRunner
 from adaptador.services.job_service import JobService
+from adaptador.services.job_worker import JobWorkerService, JobWorkerStateError
 
 
 class FakeIdeaRepository:
@@ -44,6 +45,11 @@ class FakeIdeaRepository:
         self.items[idea.id] = idea
         return idea
 
+    def delete(self, idea_id: UUID) -> None:
+        if idea_id not in self.items:
+            raise ValueError("idea no encontrada")
+        del self.items[idea_id]
+
 
 class FakeJobRepository:
     """Repositorio fake en memoria para tests de servicios."""
@@ -51,6 +57,7 @@ class FakeJobRepository:
     def __init__(self) -> None:
         self.items: dict[UUID, Job] = {}
         self.fail_next_update = False
+        self.deleted_ids: list[UUID] = []
 
     def create(self, job: Job) -> Job:
         self.items[job.id] = job
@@ -73,6 +80,12 @@ class FakeJobRepository:
             raise ValueError("job no encontrado")
         self.items[job.id] = job
         return job
+
+    def delete(self, job_id: UUID) -> None:
+        if job_id not in self.items:
+            raise ValueError("job no encontrado")
+        self.deleted_ids.append(job_id)
+        del self.items[job_id]
 
 
 class TestIdeaService:
@@ -169,6 +182,42 @@ class TestJobService:
         with pytest.raises(EntityNotFoundError):
             service.enqueue_job(idea_id=uuid4(), tipo_job=TipoJob.RESUMEN)
 
+    def test_enqueue_job_and_mark_processing_mueve_idea(self) -> None:
+        idea_repo = FakeIdeaRepository()
+        job_repo = FakeJobRepository()
+        idea = idea_repo.create(Idea(titulo="Idea", contenido_raw="Texto"))
+        service = JobService(job_repo, idea_repo)
+
+        job = service.enqueue_job_and_mark_processing(
+            idea_id=idea.id,
+            tipo_job=TipoJob.ENRIQUECIMIENTO,
+            payload={"prompt": "Analiza"},
+        )
+
+        assert job.id in job_repo.items
+        assert job_repo.items[job.id].estado == EstadoJob.PENDIENTE
+        assert idea_repo.items[idea.id].estado_kanban == EstadoKanban.EN_PROCESO
+
+    def test_enqueue_job_and_mark_processing_revierte_job_si_falla_mover_idea(
+        self,
+    ) -> None:
+        idea_repo = FakeIdeaRepository()
+        job_repo = FakeJobRepository()
+        idea = idea_repo.create(Idea(titulo="Idea", contenido_raw="Texto"))
+        idea_repo.fail_next_update = True
+        service = JobService(job_repo, idea_repo)
+
+        with pytest.raises(PersistenceOperationError):
+            service.enqueue_job_and_mark_processing(
+                idea_id=idea.id,
+                tipo_job=TipoJob.ENRIQUECIMIENTO,
+                payload={"prompt": "Analiza"},
+            )
+
+        assert job_repo.items == {}
+        assert len(job_repo.deleted_ids) == 1
+        assert idea_repo.items[idea.id].estado_kanban == EstadoKanban.NUEVA
+
     def test_start_job_cambia_estado_y_registra_intento(self) -> None:
         idea_repo = FakeIdeaRepository()
         job_repo = FakeJobRepository()
@@ -194,10 +243,44 @@ class TestJobService:
         assert completed.estado == EstadoJob.COMPLETADO
         assert completed.resultado == "Resultado"
 
-    def test_fail_job_reencola_si_quedan_intentos(self) -> None:
+    def test_mark_idea_ready_for_review_mueve_si_esta_en_proceso(self) -> None:
+        idea_repo = FakeIdeaRepository()
+        job_repo = FakeJobRepository()
+        idea = idea_repo.create(
+            Idea(
+                titulo="Idea",
+                contenido_raw="Texto",
+                estado_kanban=EstadoKanban.EN_PROCESO,
+            )
+        )
+        service = JobService(job_repo, idea_repo)
+
+        moved = service.mark_idea_ready_for_review(idea.id)
+
+        assert moved is True
+        assert idea_repo.items[idea.id].estado_kanban == EstadoKanban.REVISION
+
+    def test_mark_idea_ready_for_review_ignora_si_no_esta_en_proceso(self) -> None:
         idea_repo = FakeIdeaRepository()
         job_repo = FakeJobRepository()
         idea = idea_repo.create(Idea(titulo="Idea", contenido_raw="Texto"))
+        service = JobService(job_repo, idea_repo)
+
+        moved = service.mark_idea_ready_for_review(idea.id)
+
+        assert moved is False
+        assert idea_repo.items[idea.id].estado_kanban == EstadoKanban.NUEVA
+
+    def test_fail_job_reencola_si_quedan_intentos(self) -> None:
+        idea_repo = FakeIdeaRepository()
+        job_repo = FakeJobRepository()
+        idea = idea_repo.create(
+            Idea(
+                titulo="Idea",
+                contenido_raw="Texto",
+                estado_kanban=EstadoKanban.EN_PROCESO,
+            )
+        )
         job = job_repo.create(Job(idea_id=idea.id, max_intentos=2))
         service = JobService(job_repo, idea_repo)
 
@@ -207,11 +290,18 @@ class TestJobService:
         assert failed.estado == EstadoJob.PENDIENTE
         assert failed.resultado == "Ollama timeout"
         assert failed.intentos == 1
+        assert idea_repo.items[idea.id].estado_kanban == EstadoKanban.EN_PROCESO
 
     def test_fail_job_permanece_fallido_si_agota_intentos(self) -> None:
         idea_repo = FakeIdeaRepository()
         job_repo = FakeJobRepository()
-        idea = idea_repo.create(Idea(titulo="Idea", contenido_raw="Texto"))
+        idea = idea_repo.create(
+            Idea(
+                titulo="Idea",
+                contenido_raw="Texto",
+                estado_kanban=EstadoKanban.EN_PROCESO,
+            )
+        )
         job = job_repo.create(Job(idea_id=idea.id, max_intentos=1))
         service = JobService(job_repo, idea_repo)
 
@@ -220,6 +310,7 @@ class TestJobService:
 
         assert failed.estado == EstadoJob.FALLIDO
         assert failed.resultado == "Error permanente"
+        assert idea_repo.items[idea.id].estado_kanban == EstadoKanban.NUEVA
 
     def test_cancel_job_solo_permite_pendiente(self) -> None:
         idea_repo = FakeIdeaRepository()
@@ -297,6 +388,25 @@ class TestAsyncJobRunner:
         assert processed.resultado == f"procesado:{job.id}"
         assert processed.intentos == 1
 
+    def test_process_one_mueve_idea_en_proceso_a_revision(self) -> None:
+        idea_repo = FakeIdeaRepository()
+        job_repo = FakeJobRepository()
+        idea = idea_repo.create(
+            Idea(
+                titulo="Idea",
+                contenido_raw="Texto",
+                estado_kanban=EstadoKanban.EN_PROCESO,
+            )
+        )
+        job = job_repo.create(Job(idea_id=idea.id))
+        service = JobService(job_repo, idea_repo)
+        runner = AsyncJobRunner(service, SuccessfulHandler())
+
+        processed = asyncio.run(runner.process_one(job.id))
+
+        assert processed.estado == EstadoJob.COMPLETADO
+        assert idea_repo.items[idea.id].estado_kanban == EstadoKanban.REVISION
+
     def test_process_one_reencola_job_si_handler_falla(self) -> None:
         service, idea, job_repo = self._build_service()
         job = job_repo.create(Job(idea_id=idea.id, max_intentos=2))
@@ -329,3 +439,85 @@ class TestAsyncJobRunner:
 
         assert processed.estado == EstadoJob.PENDIENTE
         assert processed.resultado == "El resultado del job no puede estar vacío"
+
+
+class TestJobWorkerService:
+    """Ciclo de vida del worker de jobs persistentes."""
+
+    def _build_worker(
+        self,
+        *,
+        poll_interval_seconds: float = 0.01,
+        batch_limit: int | None = None,
+        recover_on_start: bool = True,
+    ) -> tuple[JobWorkerService, Idea, FakeJobRepository]:
+        idea_repo = FakeIdeaRepository()
+        job_repo = FakeJobRepository()
+        idea = idea_repo.create(Idea(titulo="Idea", contenido_raw="Texto"))
+        service = JobService(job_repo, idea_repo)
+        runner = AsyncJobRunner(service, SuccessfulHandler())
+        worker = JobWorkerService(
+            runner=runner,
+            poll_interval_seconds=poll_interval_seconds,
+            batch_limit=batch_limit,
+            recover_on_start=recover_on_start,
+        )
+        return worker, idea, job_repo
+
+    def test_process_once_procesa_lote_pendiente(self) -> None:
+        worker, idea, job_repo = self._build_worker(batch_limit=1)
+        first = job_repo.create(Job(idea_id=idea.id))
+        second = job_repo.create(Job(idea_id=idea.id))
+
+        processed = asyncio.run(worker.process_once())
+
+        assert [job.id for job in processed] == [first.id]
+        assert job_repo.items[first.id].estado == EstadoJob.COMPLETADO
+        assert job_repo.items[second.id].estado == EstadoJob.PENDIENTE
+
+    def test_start_stop_procesa_jobs_y_detiene_worker(self) -> None:
+        worker, idea, job_repo = self._build_worker()
+        job = job_repo.create(Job(idea_id=idea.id))
+
+        async def scenario() -> None:
+            await worker.start()
+            await asyncio.sleep(0.03)
+            await worker.stop()
+
+        asyncio.run(scenario())
+
+        assert worker.is_running is False
+        assert job_repo.items[job.id].estado == EstadoJob.COMPLETADO
+
+    def test_start_recupera_jobs_en_curso_antes_de_procesar(self) -> None:
+        worker, idea, job_repo = self._build_worker(batch_limit=1)
+        job = job_repo.create(Job(idea_id=idea.id, estado=EstadoJob.EN_CURSO))
+
+        async def scenario() -> None:
+            await worker.start()
+            await asyncio.sleep(0.03)
+            await worker.stop()
+
+        asyncio.run(scenario())
+
+        assert job_repo.items[job.id].estado == EstadoJob.COMPLETADO
+        assert job_repo.items[job.id].intentos == 1
+
+    def test_start_doble_lanza_error_de_estado(self) -> None:
+        worker, _, _ = self._build_worker()
+
+        async def scenario() -> None:
+            try:
+                await worker.start()
+                with pytest.raises(JobWorkerStateError):
+                    await worker.start()
+            finally:
+                await worker.stop()
+
+        asyncio.run(scenario())
+
+    def test_start_rechaza_poll_interval_invalido(self) -> None:
+        worker, _, _ = self._build_worker(poll_interval_seconds=0)
+
+        with pytest.raises(ValueError):
+            asyncio.run(worker.start())

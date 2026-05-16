@@ -31,6 +31,7 @@ class _SettingRow(QFrame):
         text_container.addWidget(title)
 
         desc = QLabel(description)
+        desc.setWordWrap(True)
         desc.setStyleSheet(
             f"font-size: 12px;"
             f" color: {COLORS['text_secondary']}; background: transparent;"
@@ -51,37 +52,32 @@ class _SettingRow(QFrame):
         )
 
 
-class _SimpleSwitch(QFrame):
+class _StatusBadge(QLabel):
     def __init__(
-        self, checked: bool = False, parent: QWidget | None = None
+        self,
+        text: str,
+        *,
+        color: str,
+        background: str,
+        parent: QWidget | None = None,
     ) -> None:
-        super().__init__(parent)
-        self._checked = checked
-        self.setFixedSize(44, 24)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._update_style()
-
-    def _update_style(self) -> None:
-        bg = COLORS["accent"] if self._checked else COLORS["bg_tertiary"]
+        super().__init__(text, parent)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setMinimumWidth(104)
         self.setStyleSheet(
-            f"""
-            background: {bg};
-            border-radius: 12px;
-            border: none;
-        """
+            f"background: {background}; color: {color};"
+            " border: none; border-radius: 6px; padding: 6px 10px;"
+            " font-size: 12px; font-weight: 600;"
         )
 
 
-def _load_config_values() -> tuple[str, str]:
-    """Lee modelo y URL de Ollama desde config/app.yaml.
-
-    Returns:
-        Tupla (modelo, url) con valores reales o fallback.
-    """
+def _load_config_values(load_config_func=None) -> tuple[str, str]:  # type: ignore[no-untyped-def]
+    """Lee modelo y URL de Ollama desde config/app.yaml."""
     try:
-        from adaptador.config import load_config
+        if load_config_func is None:
+            from adaptador.config import load_config as load_config_func
 
-        config = load_config()
+        config = load_config_func()
         return config.ollama.default_model, config.ollama.url
     except Exception:
         return "no disponible", "no disponible"
@@ -93,63 +89,69 @@ class SettingsScreen(QWidget):
         self.setObjectName("settingsScreen")
         self._setup_ui()
 
+    def _section_header(self, text: str) -> QLabel:
+        label = QLabel(text)
+        label.setStyleSheet(
+            f"font-size: 13px; font-weight: 600;"
+            f" color: {COLORS['text_muted']};"
+            f" text-transform: uppercase; letter-spacing: 1px;"
+        )
+        return label
+
     def _setup_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(24)
 
-        header = QLabel("Configuración")
+        header = QLabel("Configuracion")
         header.setStyleSheet(
-            f"font-size: 22px; font-weight: 700;"
-            f" color: {COLORS['text_primary']};"
+            f"font-size: 22px; font-weight: 700; color: {COLORS['text_primary']};"
         )
         layout.addWidget(header)
 
-        # Sección General
-        general_header = QLabel("General")
-        general_header.setStyleSheet(
-            f"font-size: 13px; font-weight: 600;"
-            f" color: {COLORS['text_muted']};"
-            f" text-transform: uppercase; letter-spacing: 1px;"
-        )
-        layout.addWidget(general_header)
+        layout.addWidget(self._section_header("General"))
 
         layout.addWidget(
             _SettingRow(
-                "Transcripción",
-                "Activar transcripción automática de audio",
-                _SimpleSwitch(True),
+                "Transcripcion",
+                "Disponible para jobs de audio; sin captura de audio en UI todavia",
+                _StatusBadge(
+                    "Parcial",
+                    color=COLORS["warning"],
+                    background=COLORS["warning_bg"],
+                ),
             )
         )
 
         layout.addWidget(
             _SettingRow(
                 "Enriquecimiento",
-                "Enriquecer ideas con IA automáticamente",
-                _SimpleSwitch(True),
+                "Procesa la cola persistente de Jobs IA en segundo plano",
+                _StatusBadge(
+                    "Activo",
+                    color=COLORS["success"],
+                    background=COLORS["success_bg"],
+                ),
             )
         )
 
         layout.addWidget(
             _SettingRow(
                 "Backups",
-                "Realizar backups automáticos periódicos",
-                _SimpleSwitch(True),
+                "Motor disponible; programacion automatica pendiente",
+                _StatusBadge(
+                    "Pendiente",
+                    color=COLORS["text_muted"],
+                    background=COLORS["bg_tertiary"],
+                ),
             )
         )
 
-        # Sección IA — valores reales de app.yaml
-        ia_header = QLabel("Inteligencia Artificial")
-        ia_header.setStyleSheet(
-            f"font-size: 13px; font-weight: 600;"
-            f" color: {COLORS['text_muted']};"
-            f" text-transform: uppercase; letter-spacing: 1px;"
-        )
         layout.addSpacing(8)
-        layout.addWidget(ia_header)
+        layout.addWidget(self._section_header("Inteligencia Artificial"))
 
         modelo, url_ollama = _load_config_values()
-        _info_style = (
+        info_style = (
             f"font-size: 14px; color: {COLORS['text_primary']};"
             f" padding: 14px 16px; background: {COLORS['bg_card']};"
             f" border: 1px solid {COLORS['border']};"
@@ -157,18 +159,16 @@ class SettingsScreen(QWidget):
         )
 
         model_label = QLabel(f"Modelo: {modelo}")
-        model_label.setStyleSheet(_info_style)
+        model_label.setStyleSheet(info_style)
         layout.addWidget(model_label)
 
         url_label = QLabel(f"Servidor: {url_ollama}")
-        url_label.setStyleSheet(_info_style)
+        url_label.setStyleSheet(info_style)
         layout.addWidget(url_label)
 
         layout.addStretch()
 
-        footer = QLabel("Los cambios se aplican automáticamente")
-        footer.setStyleSheet(
-            f"font-size: 12px; color: {COLORS['text_muted']};"
-        )
+        footer = QLabel("Configuracion cargada desde config/app.yaml al iniciar")
+        footer.setStyleSheet(f"font-size: 12px; color: {COLORS['text_muted']};")
         footer.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(footer)

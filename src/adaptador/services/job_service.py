@@ -12,7 +12,7 @@ from uuid import UUID
 from loguru import logger
 
 from adaptador.domain.entities import Job
-from adaptador.domain.enums import EstadoJob, TipoJob
+from adaptador.domain.enums import EstadoJob, EstadoKanban, TipoJob
 from adaptador.domain.errors import DomainError
 from adaptador.domain.protocols import IdeaRepository, JobRepository
 from adaptador.services.errors import (
@@ -85,6 +85,42 @@ class JobService:
             created.idea_id,
             created.tipo_job.value,
             created.max_intentos,
+        )
+        return created
+
+    def enqueue_job_and_mark_processing(
+        self,
+        *,
+        idea_id: UUID,
+        tipo_job: TipoJob,
+        payload: dict[str, Any] | None = None,
+        max_intentos: int = 3,
+        timeout_segundos: int = 120,
+    ) -> Job:
+        """
+        Encola un job y mueve la idea a EN_PROCESO como un caso de uso único.
+
+        Si el movimiento de la idea falla después de crear el job, elimina el
+        job recién creado para evitar trabajos huérfanos o estados divergentes.
+        """
+        created = self.enqueue_job(
+            idea_id=idea_id,
+            tipo_job=tipo_job,
+            payload=payload,
+            max_intentos=max_intentos,
+            timeout_segundos=timeout_segundos,
+        )
+
+        try:
+            self._mark_idea_processing(idea_id)
+        except Exception:
+            self._delete_created_job_after_enqueue_failure(created)
+            raise
+
+        logger.info(
+            "Job encolado y idea marcada en proceso: job_id={} idea_id={}",
+            created.id,
+            created.idea_id,
         )
         return created
 
@@ -201,6 +237,8 @@ class JobService:
             raise ApplicationStateError(str(exc)) from exc
 
         updated = self._update_job(job, "registrar fallo de job")
+        if updated.estado == EstadoJob.FALLIDO:
+            self._mark_idea_new_after_terminal_failure(updated)
         logger.warning(
             "Job fallido: id={} estado={} intentos={}/{} retry={}",
             updated.id,
@@ -221,6 +259,129 @@ class JobService:
                 f"No se pudo eliminar el job: {job_id}"
             ) from exc
         logger.info("Job eliminado: id={}", job_id)
+
+    def mark_idea_ready_for_review(self, idea_id: UUID) -> bool:
+        """
+        Mueve una idea de EN_PROCESO a REVISION tras completar su job IA.
+
+        Devuelve True si movió la idea. Devuelve False si la idea existe pero
+        no está en EN_PROCESO, para no convertir un job completado en fallo por
+        un estado Kanban inesperado o ya avanzado manualmente.
+        """
+        try:
+            idea = self.idea_repository.get_by_id(idea_id)
+        except Exception as exc:
+            logger.exception("No se pudo recuperar idea para revisión: id={}", idea_id)
+            raise PersistenceOperationError(
+                f"No se pudo recuperar la idea para revisión: {idea_id}"
+            ) from exc
+
+        if idea is None:
+            raise EntityNotFoundError("Idea", idea_id)
+
+        if idea.estado_kanban != EstadoKanban.EN_PROCESO:
+            logger.info(
+                "Idea no movida a revisión por estado actual: id={} estado={}",
+                idea.id,
+                idea.estado_kanban.value,
+            )
+            return False
+
+        estado_anterior = idea.estado_kanban
+        fecha_anterior = idea.fecha_modificacion
+        try:
+            idea.cambiar_estado(EstadoKanban.REVISION)
+            self.idea_repository.update(idea)
+        except DomainError as exc:
+            idea.estado_kanban = estado_anterior
+            idea.fecha_modificacion = fecha_anterior
+            raise ApplicationStateError(str(exc)) from exc
+        except Exception as exc:
+            idea.estado_kanban = estado_anterior
+            idea.fecha_modificacion = fecha_anterior
+            logger.exception("No se pudo marcar idea para revisión: id={}", idea_id)
+            raise PersistenceOperationError(
+                f"No se pudo marcar la idea para revisión: {idea_id}"
+            ) from exc
+
+        logger.info("Idea lista para revisión: id={}", idea_id)
+        return True
+
+    def _mark_idea_new_after_terminal_failure(self, job: Job) -> None:
+        """Devuelve la idea a NUEVA cuando el job ya no se reintentará."""
+        try:
+            idea = self.idea_repository.get_by_id(job.idea_id)
+            if idea is None:
+                raise EntityNotFoundError("Idea", job.idea_id)
+            if idea.estado_kanban != EstadoKanban.EN_PROCESO:
+                logger.info(
+                    "Idea no devuelta a nueva por estado actual: id={} estado={}",
+                    idea.id,
+                    idea.estado_kanban.value,
+                )
+                return
+            idea.cambiar_estado(EstadoKanban.NUEVA)
+            self.idea_repository.update(idea)
+            logger.warning(
+                "Idea devuelta a nueva tras fallo terminal: idea_id={} job_id={}",
+                idea.id,
+                job.id,
+            )
+        except Exception as exc:
+            logger.warning(
+                "No se pudo devolver idea a nueva tras fallo terminal: "
+                "idea_id={} job_id={} error={}",
+                job.idea_id,
+                job.id,
+                exc,
+            )
+
+    def _mark_idea_processing(self, idea_id: UUID) -> None:
+        try:
+            idea = self.idea_repository.get_by_id(idea_id)
+        except Exception as exc:
+            logger.exception("No se pudo recuperar idea para moverla: id={}", idea_id)
+            raise PersistenceOperationError(
+                f"No se pudo recuperar la idea para moverla: {idea_id}"
+            ) from exc
+
+        if idea is None:
+            raise EntityNotFoundError("Idea", idea_id)
+
+        estado_anterior = idea.estado_kanban
+        fecha_anterior = idea.fecha_modificacion
+        try:
+            idea.cambiar_estado(EstadoKanban.EN_PROCESO)
+            self.idea_repository.update(idea)
+        except DomainError as exc:
+            idea.estado_kanban = estado_anterior
+            idea.fecha_modificacion = fecha_anterior
+            raise ApplicationStateError(str(exc)) from exc
+        except Exception as exc:
+            idea.estado_kanban = estado_anterior
+            idea.fecha_modificacion = fecha_anterior
+            logger.exception("No se pudo marcar idea en proceso: id={}", idea_id)
+            raise PersistenceOperationError(
+                f"No se pudo marcar la idea en proceso: {idea_id}"
+            ) from exc
+
+    def _delete_created_job_after_enqueue_failure(self, job: Job) -> None:
+        try:
+            self.job_repository.delete(job.id)
+        except Exception as exc:
+            logger.exception(
+                "No se pudo compensar job creado tras fallo: job_id={} idea_id={}",
+                job.id,
+                job.idea_id,
+            )
+            raise PersistenceOperationError(
+                f"No se pudo revertir el job creado: {job.id}"
+            ) from exc
+        logger.warning(
+            "Job revertido tras fallo al marcar idea: job_id={} idea_id={}",
+            job.id,
+            job.idea_id,
+        )
 
     def cancel_job(self, job_id: UUID) -> Job:
         """Cancela un job pendiente."""

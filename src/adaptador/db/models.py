@@ -44,7 +44,7 @@ class IdeaModel(SQLModel, table=True):
     # Tipo de entrada: texto, audio_grabado, mp3, pdf, markdown
     tipo_entrada: str = Field(default="texto", max_length=50)
     # Estado Kanban: nueva, en_proceso, revision, archivada
-    estado_kanban: str = Field(default="nueva", max_length=50)
+    estado_kanban: str = Field(default="nueva", max_length=50, index=True)
     # Ruta al archivo adjunto original
     archivo_adjunto: str | None = Field(default=None, max_length=1000)
     # Timestamps
@@ -80,7 +80,7 @@ class JobModel(SQLModel, table=True):
     # Tipo de job: transcripcion, enriquecimiento, resumen, etiquetas
     tipo_job: str = Field(default="enriquecimiento", max_length=50)
     # Estado: pendiente, en_curso, completado, fallido, cancelado
-    estado: str = Field(default="pendiente", max_length=50)
+    estado: str = Field(default="pendiente", max_length=50, index=True)
     # Número de intentos realizados
     intentos: int = Field(default=0)
     # Límite máximo de reintentos

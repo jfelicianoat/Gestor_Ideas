@@ -1,4 +1,5 @@
-from PySide6.QtCore import QTimer
+from typing import Any
+
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from adaptador.domain.enums import EstadoKanban
@@ -102,6 +103,6 @@ class KanbanScreen(QWidget):
         try:
             self._idea_service.move_idea(UUID(idea_id), nuevo_estado)
             self._load_data()
-        except Exception as e:
+        except Exception:
             # Revertir recargando los datos
             self._load_data()

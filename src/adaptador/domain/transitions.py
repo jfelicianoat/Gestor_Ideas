@@ -19,10 +19,8 @@ from adaptador.domain.errors import InvalidStateTransitionError
 # revision → en_proceso (retorno para re-trabajo)
 KANBAN_TRANSITIONS: dict[EstadoKanban, frozenset[EstadoKanban]] = {
     EstadoKanban.NUEVA: frozenset({EstadoKanban.EN_PROCESO}),
-    EstadoKanban.EN_PROCESO: frozenset({EstadoKanban.REVISION}),
-    EstadoKanban.REVISION: frozenset(
-        {EstadoKanban.ARCHIVADA, EstadoKanban.EN_PROCESO}
-    ),
+    EstadoKanban.EN_PROCESO: frozenset({EstadoKanban.NUEVA, EstadoKanban.REVISION}),
+    EstadoKanban.REVISION: frozenset({EstadoKanban.ARCHIVADA, EstadoKanban.EN_PROCESO}),
     EstadoKanban.ARCHIVADA: frozenset(),
 }
 
@@ -41,9 +39,7 @@ JOB_TRANSITIONS: dict[EstadoJob, frozenset[EstadoJob]] = {
 }
 
 
-def validate_kanban_transition(
-    current: EstadoKanban, target: EstadoKanban
-) -> None:
+def validate_kanban_transition(current: EstadoKanban, target: EstadoKanban) -> None:
     """
     Valida que una transición de EstadoKanban sea permitida.
 
@@ -64,9 +60,7 @@ def validate_kanban_transition(
         )
 
 
-def validate_job_transition(
-    current: EstadoJob, target: EstadoJob
-) -> None:
+def validate_job_transition(current: EstadoJob, target: EstadoJob) -> None:
     """
     Valida que una transición de EstadoJob sea permitida.
 

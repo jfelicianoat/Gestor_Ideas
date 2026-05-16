@@ -1,7 +1,12 @@
+import asyncio
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from loguru import logger
+from PySide6.QtCore import QThread
+
+# Raíz del proyecto (resuelta contra este archivo, no CWD)
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QMainWindow,
@@ -22,6 +27,7 @@ from adaptador.db.job_repository import SQLJobRepository
 from adaptador.services.idea_service import IdeaService
 from adaptador.services.job_runner import AsyncJobRunner
 from adaptador.services.job_service import JobService
+from adaptador.services.job_worker import JobWorkerService
 from adaptador.ui.components.animations import fade_in
 from adaptador.ui.navigation.sidebar import ScreenType, Sidebar
 from adaptador.ui.screens import (
@@ -33,6 +39,51 @@ from adaptador.ui.screens import (
 )
 from adaptador.ui.theme import COLORS
 
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+
+class _BackgroundJobWorker(QThread):
+    """Ejecuta JobWorkerService fuera del hilo de UI."""
+
+    MAX_JOBS_PER_BATCH = 10
+    STOP_CHECK_INTERVAL_SECONDS = 0.2
+
+    def __init__(
+        self,
+        runner_factory: Callable[[], tuple[AsyncJobRunner, Callable[[], None]]],
+        *,
+        poll_interval_seconds: float,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._runner_factory = runner_factory
+        self._poll_interval_seconds = poll_interval_seconds
+
+    def run(self) -> None:
+        cleanup: Callable[[], None] | None = None
+        try:
+            runner, cleanup = self._runner_factory()
+            asyncio.run(self._run_worker(runner))
+        except Exception as exc:
+            logger.exception("Background job worker falló: {}", exc)
+        finally:
+            if cleanup is not None:
+                cleanup()
+
+    async def _run_worker(self, runner: AsyncJobRunner) -> None:
+        worker = JobWorkerService(
+            runner=runner,
+            poll_interval_seconds=self._poll_interval_seconds,
+            batch_limit=self.MAX_JOBS_PER_BATCH,
+            recover_on_start=True,
+        )
+        await worker.start()
+        try:
+            while not self.isInterruptionRequested():
+                await asyncio.sleep(self.STOP_CHECK_INTERVAL_SECONDS)
+        finally:
+            await worker.stop()
+
 
 class MainWindow(QMainWindow):
     DEFAULT_WIDTH = 1280
@@ -43,6 +94,7 @@ class MainWindow(QMainWindow):
         self.engine = engine
         self._screens: dict[ScreenType, QWidget] = {}
         self._services_inited = False
+        self._background_job_worker: _BackgroundJobWorker | None = None
         self._setup_window()
         self._setup_menu()
         self._init_services()
@@ -88,12 +140,28 @@ class MainWindow(QMainWindow):
         # un runner + sesión independiente para el hilo de procesamiento.
         self._job_runner: Callable[[], tuple[AsyncJobRunner, Callable]] | None = None
         try:
-            load_config()
+            load_config(_PROJECT_ROOT / "config/app.yaml")
             self._job_runner = self._build_job_runner
+            self._start_background_job_worker()
         except Exception as e:
             logger.warning("Runner IA no disponible: {}", e)
 
         self._services_inited = True
+
+    def _start_background_job_worker(self) -> None:
+        if self._job_runner is None or self._background_job_worker is not None:
+            return
+        config = load_config(_PROJECT_ROOT / "config/app.yaml")
+        self._background_job_worker = _BackgroundJobWorker(
+            self._job_runner,
+            poll_interval_seconds=config.jobs.poll_interval_seconds,
+            parent=self,
+        )
+        self._background_job_worker.start()
+        logger.info(
+            "Worker IA en background iniciado: poll_interval={}",
+            config.jobs.poll_interval_seconds,
+        )
 
     def _refresh_services(self) -> None:
         """Renueva la sesión y los servicios para evitar datos stale."""
@@ -126,7 +194,7 @@ class MainWindow(QMainWindow):
         )
         job_service.recover_in_progress_jobs()
 
-        config = load_config()
+        config = load_config(_PROJECT_ROOT / "config/app.yaml")
         ollama = AsyncOllamaClient(
             base_url=config.ollama.url,
             timeout_seconds=config.ollama.timeout_seconds,
@@ -279,8 +347,7 @@ class MainWindow(QMainWindow):
                 "Si cierras ahora, el job se"
                 " recuperará al reiniciar.\n\n"
                 "¿Cerrar de todos modos?",
-                QMessageBox.StandardButton.Yes
-                | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
             )
             if reply == QMessageBox.StandardButton.No:
@@ -292,11 +359,12 @@ class MainWindow(QMainWindow):
                 processor.requestInterruption()
                 if not processor.wait(3000):
                     logger.warning(
-                        "Hilo de procesamiento no terminó"
-                        " en 3s, forzando cierre"
+                        "Hilo de procesamiento no terminó en 3s, forzando cierre"
                     )
 
         # Cerrar sesión de UI
+        self._stop_background_job_worker()
+
         if hasattr(self, "_ui_session") and self._ui_session:
             try:
                 self._ui_session.close()
@@ -305,3 +373,12 @@ class MainWindow(QMainWindow):
             self._ui_session = None
 
         super().closeEvent(event)
+
+    def _stop_background_job_worker(self) -> None:
+        worker = self._background_job_worker
+        if worker is None:
+            return
+        worker.requestInterruption()
+        if not worker.wait(3000):
+            logger.warning("Worker IA background no terminó en 3s")
+        self._background_job_worker = None

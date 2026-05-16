@@ -12,6 +12,7 @@ Cubre:
 
 from sqlmodel import Session, text
 
+from adaptador.db.engine import ensure_performance_indexes
 from adaptador.db.models import BackupRegistroModel, IdeaModel, JobModel
 
 
@@ -22,10 +23,7 @@ class TestEngineYPragmas:
         """Verifica que las 3 tablas existen tras create_all."""
         with Session(sqlite_engine) as session:
             result = session.exec(
-                text(
-                    "SELECT name FROM sqlite_master "
-                    "WHERE type='table' ORDER BY name"
-                )
+                text("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
             )
             tables = [row[0] for row in result]
 
@@ -48,6 +46,27 @@ class TestEngineYPragmas:
             fk_enabled = result.one()[0]
 
         assert fk_enabled == 1
+
+    def test_indices_de_estado_creados(self, sqlite_engine) -> None:
+        """Verifica indices para consultas por estado."""
+        with Session(sqlite_engine) as session:
+            idea_indexes = session.exec(text("PRAGMA index_list('ideas')")).all()
+            job_indexes = session.exec(text("PRAGMA index_list('jobs')")).all()
+
+        assert "ix_ideas_estado_kanban" in {row[1] for row in idea_indexes}
+        assert "ix_jobs_estado" in {row[1] for row in job_indexes}
+
+    def test_ensure_performance_indexes_es_idempotente(self, sqlite_engine) -> None:
+        """La creacion explicita de indices puede ejecutarse mas de una vez."""
+        ensure_performance_indexes(sqlite_engine)
+        ensure_performance_indexes(sqlite_engine)
+
+        with Session(sqlite_engine) as session:
+            idea_indexes = session.exec(text("PRAGMA index_list('ideas')")).all()
+            job_indexes = session.exec(text("PRAGMA index_list('jobs')")).all()
+
+        assert "ix_ideas_estado_kanban" in {row[1] for row in idea_indexes}
+        assert "ix_jobs_estado" in {row[1] for row in job_indexes}
 
 
 class TestIdeaModel:
