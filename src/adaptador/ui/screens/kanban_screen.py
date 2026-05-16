@@ -63,20 +63,16 @@ class KanbanScreen(QWidget):
         )
 
         try:
-            # Limpiar columnas
-            for col in self._columnas.values():
-                col.clear_cards()
-
-            from adaptador.ui.kanban.idea_card import IdeaCard
-
             # Cargar ideas para cada estado
             hay_ideas = False
             for estado, col in self._columnas.items():
                 ideas = self._idea_service.list_by_estado(estado)
-                for idea in ideas:
+                if ideas:
                     hay_ideas = True
-                    card = IdeaCard(idea)
-                    col.add_card(card)
+                
+                # Se delega la recreación/actualización al componente, 
+                # que recicla los widgets si el ID coincide.
+                col.set_ideas(ideas)
 
             if hay_ideas:
                 self._state_view.show_state(StateView.CONTENT)
@@ -88,6 +84,8 @@ class KanbanScreen(QWidget):
                     icon="📋",
                 )
         except Exception:
+            for col in self._columnas.values():
+                col.clear_cards()
             self._state_view.show_state(
                 StateView.ERROR,
                 title="Error al cargar",

@@ -371,16 +371,17 @@ class EmptyResultHandler:
 class TestAsyncJobRunner:
     """Procesamiento asíncrono desacoplado de jobs."""
 
-    def _build_service(self) -> tuple[JobService, Idea, FakeJobRepository]:
+    def _build_service(self) -> tuple[JobService, Idea, FakeJobRepository, IdeaService]:
         idea_repo = FakeIdeaRepository()
         job_repo = FakeJobRepository()
         idea = idea_repo.create(Idea(titulo="Idea", contenido_raw="Texto"))
-        return JobService(job_repo, idea_repo), idea, job_repo
+        idea_service = IdeaService(idea_repo)
+        return JobService(job_repo, idea_repo), idea, job_repo, idea_service
 
     def test_process_one_completa_job_con_handler_exitoso(self) -> None:
-        service, idea, job_repo = self._build_service()
+        service, idea, job_repo, idea_service = self._build_service()
         job = job_repo.create(Job(idea_id=idea.id))
-        runner = AsyncJobRunner(service, SuccessfulHandler())
+        runner = AsyncJobRunner(service, SuccessfulHandler(), idea_service=idea_service)
 
         processed = asyncio.run(runner.process_one(job.id))
 
@@ -400,7 +401,8 @@ class TestAsyncJobRunner:
         )
         job = job_repo.create(Job(idea_id=idea.id))
         service = JobService(job_repo, idea_repo)
-        runner = AsyncJobRunner(service, SuccessfulHandler())
+        idea_service = IdeaService(idea_repo)
+        runner = AsyncJobRunner(service, SuccessfulHandler(), idea_service=idea_service)
 
         processed = asyncio.run(runner.process_one(job.id))
 
@@ -408,9 +410,9 @@ class TestAsyncJobRunner:
         assert idea_repo.items[idea.id].estado_kanban == EstadoKanban.REVISION
 
     def test_process_one_reencola_job_si_handler_falla(self) -> None:
-        service, idea, job_repo = self._build_service()
+        service, idea, job_repo, idea_service = self._build_service()
         job = job_repo.create(Job(idea_id=idea.id, max_intentos=2))
-        runner = AsyncJobRunner(service, FailingHandler())
+        runner = AsyncJobRunner(service, FailingHandler(), idea_service=idea_service)
 
         processed = asyncio.run(runner.process_one(job.id))
 
@@ -419,10 +421,10 @@ class TestAsyncJobRunner:
         assert processed.intentos == 1
 
     def test_process_pending_respeta_limit(self) -> None:
-        service, idea, job_repo = self._build_service()
+        service, idea, job_repo, idea_service = self._build_service()
         first = job_repo.create(Job(idea_id=idea.id))
         second = job_repo.create(Job(idea_id=idea.id))
-        runner = AsyncJobRunner(service, SuccessfulHandler())
+        runner = AsyncJobRunner(service, SuccessfulHandler(), idea_service=idea_service)
 
         processed = asyncio.run(runner.process_pending(limit=1))
 
@@ -431,14 +433,14 @@ class TestAsyncJobRunner:
         assert job_repo.items[second.id].estado == EstadoJob.PENDIENTE
 
     def test_process_one_no_deja_en_curso_si_complete_falla(self) -> None:
-        service, idea, job_repo = self._build_service()
+        service, idea, job_repo, idea_service = self._build_service()
         job = job_repo.create(Job(idea_id=idea.id, max_intentos=2))
-        runner = AsyncJobRunner(service, EmptyResultHandler())
+        runner = AsyncJobRunner(service, EmptyResultHandler(), idea_service=idea_service)
 
         processed = asyncio.run(runner.process_one(job.id))
 
         assert processed.estado == EstadoJob.PENDIENTE
-        assert processed.resultado == "El resultado del job no puede estar vacío"
+        assert processed.resultado == "El contenido enriquecido no puede estar vacío"
 
 
 class TestJobWorkerService:
@@ -455,7 +457,8 @@ class TestJobWorkerService:
         job_repo = FakeJobRepository()
         idea = idea_repo.create(Idea(titulo="Idea", contenido_raw="Texto"))
         service = JobService(job_repo, idea_repo)
-        runner = AsyncJobRunner(service, SuccessfulHandler())
+        idea_service = IdeaService(idea_repo)
+        runner = AsyncJobRunner(service, SuccessfulHandler(), idea_service=idea_service)
         worker = JobWorkerService(
             runner=runner,
             poll_interval_seconds=poll_interval_seconds,

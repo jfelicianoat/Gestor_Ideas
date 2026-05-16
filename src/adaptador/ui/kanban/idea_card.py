@@ -85,6 +85,20 @@ class IdeaCard(QFrame):
             f"#ideaCard:hover {{ border-color: {COLORS['accent']}; background: {COLORS['bg_hover']}; }}"
         )
 
+    def update_idea(self, idea: Idea) -> None:
+        self.idea = idea
+        titulo_text = idea.titulo if idea.titulo else "Sin título"
+        self.lbl_titulo.setText(titulo_text)
+        
+        contenido = idea.contenido_raw
+        if len(contenido) > self.MAX_TEXT_LEN:
+            contenido = contenido[: self.MAX_TEXT_LEN] + "..."
+        self.lbl_contenido.setText(contenido)
+        
+        fecha_str = idea.fecha_creacion.strftime("%Y-%m-%d %H:%M")
+        tipo_str = idea.tipo_entrada.value.capitalize()
+        self.lbl_meta.setText(f"📅 {fecha_str} • 🏷️ {tipo_str}")
+
     # ---- Drag support ----
 
     def mousePressEvent(self, event: Any) -> None:

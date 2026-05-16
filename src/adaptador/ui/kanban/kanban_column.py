@@ -103,6 +103,30 @@ class KanbanColumn(QWidget):
         self._tarjetas.clear()
         self._update_counter()
 
+    def set_ideas(self, ideas: list['Idea'], on_avanzar: Any = None) -> None:
+        """Actualiza la lista de ideas, reutilizando widgets existentes."""
+        current_map = {card.idea.id: card for card in self._tarjetas}
+        new_tarjetas = []
+        
+        new_ids = {idea.id for idea in ideas}
+        for card in self._tarjetas:
+            if card.idea.id not in new_ids:
+                self.cards_layout.removeWidget(card)
+                card.deleteLater()
+                
+        for idea in ideas:
+            if idea.id in current_map:
+                card = current_map[idea.id]
+                card.update_idea(idea)
+                card.on_avanzar = on_avanzar
+            else:
+                card = IdeaCard(idea, on_avanzar=on_avanzar)
+                self.cards_layout.addWidget(card)
+            new_tarjetas.append(card)
+            
+        self._tarjetas = new_tarjetas
+        self._update_counter()
+
     # ---- Drop support ----
 
     def dragEnterEvent(self, event: Any) -> None:

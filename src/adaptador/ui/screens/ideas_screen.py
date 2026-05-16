@@ -153,29 +153,29 @@ class _IdeaListItem(QFrame):
         text_layout.setSpacing(2)
 
         titulo = self.idea.titulo if self.idea.titulo else "Sin título"
-        title_label = QLabel(titulo)
-        title_label.setStyleSheet(
+        self._title_label = QLabel(titulo)
+        self._title_label.setStyleSheet(
             f"font-size: 14px; font-weight: 600; color: {COLORS['text_primary']}; background: transparent;"
         )
-        text_layout.addWidget(title_label)
+        text_layout.addWidget(self._title_label)
 
         preview = self.idea.contenido_raw[:80] + (
             "..." if len(self.idea.contenido_raw) > 80 else ""
         )
-        preview_label = QLabel(preview)
-        preview_label.setStyleSheet(
+        self._preview_label = QLabel(preview)
+        self._preview_label.setStyleSheet(
             f"font-size: 12px; color: {COLORS['text_secondary']}; background: transparent;"
         )
-        preview_label.setWordWrap(True)
-        text_layout.addWidget(preview_label)
+        self._preview_label.setWordWrap(True)
+        text_layout.addWidget(self._preview_label)
 
         fecha = self.idea.fecha_creacion.strftime("%d/%m/%Y %H:%M")
         tipo = self.idea.tipo_entrada.value.capitalize()
-        meta_label = QLabel(f"{fecha} · {tipo}")
-        meta_label.setStyleSheet(
+        self._meta_label = QLabel(f"{fecha} · {tipo}")
+        self._meta_label.setStyleSheet(
             f"font-size: 11px; color: {COLORS['text_muted']}; background: transparent;"
         )
-        text_layout.addWidget(meta_label)
+        text_layout.addWidget(self._meta_label)
 
         layout.addLayout(text_layout, stretch=1)
 
@@ -196,6 +196,20 @@ class _IdeaListItem(QFrame):
             f"#ideaListItem:hover {{ background: {COLORS['bg_hover']};"
             f" border-color: {COLORS['accent']}; }}"
         )
+
+    def update_idea(self, idea: Idea) -> None:
+        self.idea = idea
+        titulo = idea.titulo if idea.titulo else "Sin título"
+        self._title_label.setText(titulo)
+        
+        preview = idea.contenido_raw[:80] + (
+            "..." if len(idea.contenido_raw) > 80 else ""
+        )
+        self._preview_label.setText(preview)
+        
+        fecha = idea.fecha_creacion.strftime("%d/%m/%Y %H:%M")
+        tipo = idea.tipo_entrada.value.capitalize()
+        self._meta_label.setText(f"{fecha} · {tipo}")
 
     def is_checked(self) -> bool:
         return self._checkbox.isChecked()
@@ -309,25 +323,32 @@ class _IdeaListWidget(QWidget):
     on_item_detail: Callable[[Idea], None] | None = None
 
     def set_items(self, ideas: list[Idea]) -> None:
-        """Reemplaza la lista completa de ideas, destruyendo las anteriores."""
-        # Destruir widgets anteriores correctamente
+        """Actualiza la lista de ideas, reutilizando widgets existentes para evitar lag."""
+        current_map = {item.idea.id: item for item in self._all_items}
+        new_all_items = []
+        
+        # Eliminar widgets que ya no están en la lista
+        new_ids = {idea.id for idea in ideas}
         for item in self._all_items:
-            self._list_layout.removeWidget(item)
-            item.deleteLater()
-
-        self._all_items = []
-        self._items = []
-
+            if item.idea.id not in new_ids:
+                self._list_layout.removeWidget(item)
+                item.deleteLater()
+                
+        # Actualizar o crear widgets
         for idea in ideas:
-            item = _IdeaListItem(
-                idea, on_delete=self.on_item_delete, on_detail=self.on_item_detail
-            )
-            item._checkbox.toggled.connect(self._update_enqueue_btn)
-            self._all_items.append(item)
-            self._list_layout.addWidget(item)
-
-        self._items = list(self._all_items)
-        self._refresh_list()
+            if idea.id in current_map:
+                item = current_map[idea.id]
+                item.update_idea(idea)
+            else:
+                item = _IdeaListItem(
+                    idea, on_delete=self.on_item_delete, on_detail=self.on_item_detail
+                )
+                item._checkbox.toggled.connect(self._update_enqueue_btn)
+                self._list_layout.addWidget(item)
+            new_all_items.append(item)
+            
+        self._all_items = new_all_items
+        self._apply_filter()
 
     def _refresh_list(self) -> None:
         """Muestra/oculta widgets según el filtro (sin destruir)."""
